@@ -26,36 +26,56 @@ Because Windows natively handles Bluetooth transport, audio codec decoding (such
 
 - Operating System: Windows 10 Version 2004 (Build 19041) or higher, or Windows 11.
 - Bluetooth Adapter: Bluetooth adapter supporting A2DP Sink profiles.
-- Pre-requisite: The remote audio device (e.g., smartphone) must already be paired with the host PC through Windows Settings.
-- Build Toolchain (Source Builds): Rust compiler (`rustc` and `cargo` via `rustup`) with the MSVC toolchain (`x86_64-pc-windows-msvc`).
+- Build Toolchain: Rust compiler (`rustc` and `cargo` via `rustup`) with the MSVC toolchain (`x86_64-pc-windows-msvc`).
 
 ---
 
-## Building from Source
+## Installation & Setup
 
-Ensure the Rust toolchain is installed on the host machine:
+### 1. Bluetooth Pairing (Initial Setup)
+
+Before running the application, your phone or audio source must be paired with Windows:
+
+1. Open Windows **Settings** (`Win + I`) -> **Bluetooth & devices**.
+2. Turn on Bluetooth and click **Add device** -> **Bluetooth**.
+3. Select your phone/tablet and complete the pairing handshake.
+
+### 2. Installing AetherSora
+
+#### Option A: Direct Install via Cargo (Recommended)
+
+If you already have the Rust toolchain installed, you can install the executable directly into your Cargo binary directory:
 
 ```powershell
-# Install Rustup if not already installed
-winget install Rustlang.Rustup
+cargo install --git https://github.com/NakunaruZeno/win-bt-audio-receiver.git
 ```
 
-Clone the repository and compile with release optimizations:
+Once installed, you can launch `aethersora` directly from any terminal.
 
-```powershell
-cargo build --release
-```
+#### Option B: Build from Source
 
-The resulting optimized executable will be located at:
-```text
-target\release\aethersora.exe
-```
+1. Install Rust if not already available on your machine:
+   ```powershell
+   winget install Rustlang.Rustup
+   ```
+
+2. Clone this repository and compile with release optimizations:
+   ```powershell
+   git clone https://github.com/NakunaruZeno/win-bt-audio-receiver.git
+   cd win-bt-audio-receiver
+   cargo build --release
+   ```
+
+3. The compiled binary will be located at:
+   ```text
+   target\release\aethersora.exe
+   ```
 
 ---
 
 ## Usage
 
-Run the compiled executable directly from PowerShell or Command Prompt:
+Run the executable directly from PowerShell or Command Prompt:
 
 ```powershell
 # Default launch: Uses cached device ID if available; otherwise scans paired devices
@@ -101,4 +121,4 @@ This file is automatically managed and excluded from version control. Delete thi
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE).
