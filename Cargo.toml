@@ -1,0 +1,23 @@
+[package]
+name = "aethersora"
+version = "0.1.0"
+edition = "2021"
+description = "AetherSora - Ultra-lightweight Windows Bluetooth A2DP Sink Audio Receiver using WinRT AudioPlaybackConnection"
+
+[dependencies.windows]
+version = "0.58.0"
+features = [
+    "Media_Audio",
+    "Devices_Enumeration",
+    "Foundation",
+    "Foundation_Collections",
+    "Win32_Foundation",
+    "Win32_System_Console",
+]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

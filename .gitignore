@@ -1,0 +1,23 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Configuration & Saved Bluetooth IDs (Contains private device hardware IDs)
+device_id.cfg
+**/*.cfg
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS & Temp files
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.log
+.env
+.env.*
