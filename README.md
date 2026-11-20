@@ -14,10 +14,11 @@ Because Windows natively handles Bluetooth transport, audio codec decoding (such
 
 ## Key Features
 
-- Minimal Resource Consumption: Binary footprint of approximately 190 KB, utilizing 0% CPU when streaming and negligible system memory.
+- Minimal Resource Consumption: Binary footprint of approximately 190 KB, utilizing 0% CPU when streaming and minimal private memory (~4.2 MB).
 - Zero External Dependencies: Built strictly using Microsoft's official `windows-rs` projection, without GUI frameworks or third-party audio libraries.
-- Fast Connect: Automatically caches target device identifiers (`device_id.cfg`) to bypass full device discovery on subsequent launches, establishing connections in under one second.
-- Automatic Reconnection: Implements `DeviceWatcher` along with connection state monitoring (`StateChanged`) to detect when a disconnected device re-enters range, automatically re-establishing the audio stream.
+- Fast Connect: Automatically caches target device identifiers (`device_id.cfg`) to bypass full device discovery on subsequent launches, establishing connections rapidly.
+- On-Demand Auto-Reconnection: Runs `DeviceWatcher` only while disconnected/waiting and stops it immediately once the audio stream is `Opened`, eliminating unnecessary background watcher activity during playback.
+- Anti-Throttling & Stream Stability: Opts out of Windows 11 EcoQoS background power throttling and prevents idle system sleep while audio is actively streaming.
 - Graceful Signal Handling: Intercepts console termination events (`Ctrl+C`, window closing, logoff, system shutdown) to close WinRT handles cleanly before process exit.
 
 ---
@@ -90,11 +91,25 @@ Run the executable directly from PowerShell or Command Prompt:
 # Connect directly to a device matching a name or ID substring
 .\aethersora.exe --device "Phone"
 
+# Run in minimal mode without DeviceWatcher auto-reconnect
+.\aethersora.exe --no-reconnect
+
 # Display CLI help
 .\aethersora.exe --help
 ```
 
 To stop the receiver and cleanly release the audio endpoint, press `Ctrl+C` in the console window.
+
+---
+
+## Audio Quality & Stuttering Notes
+
+- **Codec & Quality:** Windows 10/11 A2DP Sink (`Microsoft Bluetooth A2dp Sink` via `AudioPlaybackConnection`) handles codec negotiation and decoding inside the OS stack (typically negotiating standard **SBC** stereo; high-bitrate codecs like LDAC/aptX HD are not exposed to third-party WinRT sink apps).
+- **Two-Way Voice Calls / Discord on Phone:** A2DP Sink is a unidirectional media profile (no HFP microphone return). Voice apps on Android/iOS that switch to communication mode may route audio back to the phone earpiece/speaker instead of the PC.
+- **Reducing Bluetooth Stutters:**
+  - Disable *"Allow the computer to turn off this device to save power"* on your Bluetooth adapter in Device Manager and disable **USB Selective Suspend** in Windows Power Options.
+  - Bluetooth shares a single 2.4 GHz radio across all connected devices: active BLE mice/keyboards on the same Intel/Realtek combo adapter or 2.4 GHz Wi-Fi on the phone can cause packet contention. Use 5 GHz Wi-Fi on both PC and phone, and avoid high-polling-rate BLE mice on the same Bluetooth radio if stuttering occurs.
+  - Close or unlink background Bluetooth polling apps (such as Microsoft Phone Link) if they interfere with continuous A2DP streaming.
 
 ---
 

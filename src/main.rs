@@ -17,6 +17,14 @@ use windows::Win32::System::Console::{
     SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT,
     CTRL_SHUTDOWN_EVENT,
 };
+use windows::Win32::System::Power::{
+    SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
+};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, ProcessPowerThrottling, SetProcessInformation,
+    PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+    PROCESS_POWER_THROTTLING_STATE,
+};
 
 const CONFIG_FILE_NAME: &str = "device_id.cfg";
 const RECONNECT_DEBOUNCE: Duration = Duration::from_millis(800);
@@ -32,6 +40,14 @@ struct PairedDevice {
 struct SignalState {
     exit_requested: bool,
     reconnect_requested: bool,
+    state_sync_requested: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WakeEvent {
+    Exit,
+    Reconnect,
+    StateSync,
 }
 
 struct AppSignal {
@@ -61,6 +77,13 @@ impl AppSignal {
         }
     }
 
+    fn request_state_sync(&self) {
+        if let Ok(mut guard) = self.state.lock() {
+            guard.state_sync_requested = true;
+            self.cv.notify_all();
+        }
+    }
+
     fn is_exit_requested(&self) -> bool {
         self.state
             .lock()
@@ -68,27 +91,33 @@ impl AppSignal {
             .unwrap_or(true)
     }
 
-    /// Blocks with 0% CPU until either exit or reconnect is signaled.
-    /// Returns `true` if exit was requested, `false` if reconnect should be attempted.
-    fn wait_for_event(&self) -> bool {
+    /// Blocks with 0% CPU until exit, connection state change, or watcher reconnect is signaled.
+    fn wait_for_event(&self) -> WakeEvent {
         let mut guard = match self.state.lock() {
             Ok(g) => g,
-            Err(_) => return true,
+            Err(_) => return WakeEvent::Exit,
         };
 
-        while !guard.exit_requested && !guard.reconnect_requested {
+        while !guard.exit_requested
+            && !guard.reconnect_requested
+            && !guard.state_sync_requested
+        {
             guard = match self.cv.wait(guard) {
                 Ok(g) => g,
-                Err(_) => return true,
+                Err(_) => return WakeEvent::Exit,
             };
         }
 
         if guard.exit_requested {
-            return true;
+            return WakeEvent::Exit;
+        }
+        if guard.state_sync_requested {
+            guard.state_sync_requested = false;
+            return WakeEvent::StateSync;
         }
 
         guard.reconnect_requested = false;
-        false
+        WakeEvent::Reconnect
     }
 
     /// Waits for `duration` unless exit is requested earlier. Returns `true` if exiting.
@@ -115,6 +144,37 @@ impl AppSignal {
         }
 
         guard.exit_requested
+    }
+}
+
+/// Opts out of Windows 11 EcoQoS background throttling so COM/WinRT callbacks
+/// are not delayed when the console window is minimized or unfocused.
+fn disable_power_throttling() {
+    let throttling = PROCESS_POWER_THROTTLING_STATE {
+        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        StateMask: 0,
+    };
+    unsafe {
+        let _ = SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            (&throttling as *const PROCESS_POWER_THROTTLING_STATE).cast(),
+            std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        );
+    }
+}
+
+/// Prevents Windows idle sleep while audio is actively streaming; releases the
+/// assertion as soon as the stream closes or the app exits.
+fn set_streaming_keep_awake(active: bool) {
+    let flags = if active {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    unsafe {
+        let _ = SetThreadExecutionState(flags);
     }
 }
 
@@ -313,6 +373,7 @@ fn connect_and_open(
                         AudioPlaybackConnectionState::Opened => {
                             was_opened_clone.store(true, Ordering::SeqCst);
                             println!("[State] '{name_owned}' -> Opened (audio stream active).");
+                            signal_clone.request_state_sync();
                         }
                         AudioPlaybackConnectionState::Closed => {
                             let previously_opened = was_opened_clone.swap(false, Ordering::SeqCst);
@@ -320,6 +381,7 @@ fn connect_and_open(
                                 println!(
                                     "[State] '{name_owned}' -> Closed (disconnected). Waiting for device..."
                                 );
+                                signal_clone.request_state_sync();
                             }
                         }
                         other => {
@@ -494,11 +556,12 @@ fn print_help() {
         "AetherSora - Lightweight Windows Bluetooth A2DP Sink\n\
          \n\
          USAGE:\n\
-         \taethersora              Fast-connect using saved device_id.cfg (or scan on first run)\n\
-         \taethersora --scan       Scan paired devices, select one, and save to device_id.cfg\n\
-         \taethersora --list       List all paired Bluetooth audio source devices and exit\n\
-         \taethersora --device Q   Connect to device matching name/ID substring Q and save\n\
-         \taethersora --help       Show this help message\n\
+         \taethersora                   Fast-connect using saved device_id.cfg (or scan on first run)\n\
+         \taethersora --scan            Scan paired devices, select one, and save to device_id.cfg\n\
+         \taethersora --list            List all paired Bluetooth audio source devices and exit\n\
+         \taethersora --device Q        Connect to device matching name/ID substring Q and save\n\
+         \taethersora --no-reconnect    Disable DeviceWatcher auto-reconnect for minimal footprint\n\
+         \taethersora --help            Show this help message\n\
          \n\
          Press Ctrl+C while running to close the audio connection and exit cleanly."
     );
@@ -512,30 +575,41 @@ enum Mode {
     Help,
 }
 
-fn parse_args() -> std::result::Result<Mode, String> {
-    let mut args = std::env::args().skip(1);
-    let Some(first) = args.next() else {
-        return Ok(Mode::Default);
-    };
+struct CliOptions {
+    mode: Mode,
+    auto_reconnect: bool,
+}
 
-    match first.as_str() {
-        "-h" | "--help" => Ok(Mode::Help),
-        "-l" | "--list" => Ok(Mode::List),
-        "-s" | "--scan" => Ok(Mode::Scan),
-        "-d" | "--device" => match args.next() {
-            Some(q) if !q.trim().is_empty() => Ok(Mode::Device(q)),
-            _ => Err("Missing value for --device <name_or_id>".to_owned()),
-        },
-        arg if arg.starts_with("--device=") => {
-            let q = arg.trim_start_matches("--device=");
-            if q.trim().is_empty() {
-                Err("Missing value for --device=<name_or_id>".to_owned())
-            } else {
-                Ok(Mode::Device(q.to_owned()))
+fn parse_args() -> std::result::Result<CliOptions, String> {
+    let mut args = std::env::args().skip(1);
+    let mut mode = Mode::Default;
+    let mut auto_reconnect = true;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => return Ok(CliOptions { mode: Mode::Help, auto_reconnect }),
+            "-l" | "--list" => mode = Mode::List,
+            "-s" | "--scan" => mode = Mode::Scan,
+            "--no-reconnect" => auto_reconnect = false,
+            "-d" | "--device" => match args.next() {
+                Some(q) if !q.trim().is_empty() => mode = Mode::Device(q),
+                _ => return Err("Missing value for --device <name_or_id>".to_owned()),
+            },
+            a if a.starts_with("--device=") => {
+                let q = a.trim_start_matches("--device=");
+                if q.trim().is_empty() {
+                    return Err("Missing value for --device=<name_or_id>".to_owned());
+                }
+                mode = Mode::Device(q.to_owned());
             }
+            other => return Err(format!("Unknown argument: {other}")),
         }
-        other => Err(format!("Unknown argument: {other}")),
     }
+
+    Ok(CliOptions {
+        mode,
+        auto_reconnect,
+    })
 }
 
 fn persist_and_return(dev: Option<PairedDevice>) -> Option<(String, String)> {
@@ -571,9 +645,43 @@ fn resolve_target_device(mode: Mode) -> Result<Option<(String, String)>> {
     }
 }
 
+fn is_stream_opened(active_conn: &Option<ActiveConnection>) -> bool {
+    matches!(
+        active_conn.as_ref().and_then(|c| c.handle.State().ok()),
+        Some(AudioPlaybackConnectionState::Opened)
+    )
+}
+
+fn sync_watcher_and_power(
+    opened: bool,
+    auto_reconnect: bool,
+    device_id: &str,
+    signal: &Arc<AppSignal>,
+    watcher: &mut Option<WatcherGuard>,
+) {
+    set_streaming_keep_awake(opened);
+
+    if opened {
+        if let Some(guard) = watcher.take() {
+            guard.stop_cleanly();
+            println!("[Watcher] Stopped while streaming (zero background polling).");
+        }
+    } else if auto_reconnect && watcher.is_none() {
+        match WatcherGuard::start(device_id.to_owned(), Arc::clone(signal)) {
+            Ok(guard) => {
+                *watcher = Some(guard);
+                println!("[Watcher] Armed on-demand to auto-reconnect when device returns.");
+            }
+            Err(err) => {
+                eprintln!("[Warning] Failed to start DeviceWatcher: {err}");
+            }
+        }
+    }
+}
+
 fn run() -> Result<i32> {
-    let mode = match parse_args() {
-        Ok(m) => m,
+    let options = match parse_args() {
+        Ok(o) => o,
         Err(msg) => {
             eprintln!("Error: {msg}\n");
             print_help();
@@ -581,7 +689,7 @@ fn run() -> Result<i32> {
         }
     };
 
-    match mode {
+    match options.mode {
         Mode::Help => {
             print_help();
             return Ok(0);
@@ -598,9 +706,11 @@ fn run() -> Result<i32> {
         _ => {}
     }
 
-    let Some((device_id, device_name)) = resolve_target_device(mode)? else {
+    let Some((device_id, device_name)) = resolve_target_device(options.mode)? else {
         return Ok(1);
     };
+
+    disable_power_throttling();
 
     let signal = Arc::new(AppSignal::new());
     install_ctrl_handler(Arc::clone(&signal))?;
@@ -612,18 +722,39 @@ fn run() -> Result<i32> {
             Err(err) => {
                 eprintln!(
                     "[Waiting] Initial TryCreateFromId/Start failed for '{device_name}': {err}. \
-                     Watching for device via DeviceWatcher..."
+                     Waiting for device..."
                 );
                 None
             }
         };
 
-    let watcher = WatcherGuard::start(device_id.clone(), Arc::clone(&signal))?;
+    // Only keep DeviceWatcher alive while disconnected; pause it while streaming
+    // to eliminate unnecessary background PnP/Bluetooth watcher overhead.
+    let mut watcher: Option<WatcherGuard> = None;
+    sync_watcher_and_power(
+        is_stream_opened(&active_conn),
+        options.auto_reconnect,
+        &device_id,
+        &signal,
+        &mut watcher,
+    );
+
     println!("Running in background (0% CPU idle). Press Ctrl+C to disconnect and exit.");
 
     loop {
-        if signal.wait_for_event() {
-            break;
+        match signal.wait_for_event() {
+            WakeEvent::Exit => break,
+            WakeEvent::StateSync => {
+                sync_watcher_and_power(
+                    is_stream_opened(&active_conn),
+                    options.auto_reconnect,
+                    &device_id,
+                    &signal,
+                    &mut watcher,
+                );
+                continue;
+            }
+            WakeEvent::Reconnect => {}
         }
 
         // Coalesce bursty DeviceWatcher Updated events while Bluetooth settles.
@@ -631,12 +762,8 @@ fn run() -> Result<i32> {
             break;
         }
 
-        let needs_open = match &active_conn {
-            Some(conn) => !matches!(conn.handle.State(), Ok(AudioPlaybackConnectionState::Opened)),
-            None => true,
-        };
-
-        if !needs_open {
+        if is_stream_opened(&active_conn) {
+            sync_watcher_and_power(true, options.auto_reconnect, &device_id, &signal, &mut watcher);
             continue;
         }
 
@@ -663,10 +790,21 @@ fn run() -> Result<i32> {
                 }
             }
         }
+
+        sync_watcher_and_power(
+            is_stream_opened(&active_conn),
+            options.auto_reconnect,
+            &device_id,
+            &signal,
+            &mut watcher,
+        );
     }
 
     println!("\n[Shutdown] Closing Bluetooth audio connection...");
-    watcher.stop_cleanly();
+    set_streaming_keep_awake(false);
+    if let Some(guard) = watcher.take() {
+        guard.stop_cleanly();
+    }
     if let Some(conn) = active_conn.take() {
         conn.close_cleanly();
     }
