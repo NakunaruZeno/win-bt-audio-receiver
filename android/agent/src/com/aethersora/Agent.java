@@ -21,17 +21,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class Agent {
     private static final int SAMPLE_RATE = 48000;
     private static final int CHANNELS = 2;
-    private static final int BYTES_PER_FRAME = CHANNELS * 2; // 16-bit stereo = 4 bytes
-    private static final int FRAMES_PER_PACKET = 240;        // 5 ms at 48 kHz
-    private static final int PCM_BYTES_PER_PACKET = FRAMES_PER_PACKET * BYTES_PER_FRAME; // 960 bytes
+    private static final int BYTES_PER_FRAME = CHANNELS * 2;
+    private static final int FRAMES_PER_PACKET = 240;
+    private static final int PCM_BYTES_PER_PACKET = FRAMES_PER_PACKET * BYTES_PER_FRAME;
     private static final int HEADER_BYTES = 12;
-    private static final int PACKET_BYTES = HEADER_BYTES + PCM_BYTES_PER_PACKET; // 972 bytes (< MTU)
+    private static final int PACKET_BYTES = HEADER_BYTES + PCM_BYTES_PER_PACKET;
 
     private static final short MAGIC = (short) 0xA55A;
     private static final byte FLAG_AUDIO = 0x00;
     private static final byte FLAG_KEEPALIVE = 0x01;
 
-    // MediaRecorder.AudioSource.REMOTE_SUBMIX = 8
     private static final int AUDIO_SOURCE_REMOTE_SUBMIX = 8;
 
     public static void main(String[] args) {
@@ -55,8 +54,6 @@ public final class Agent {
 
         final AtomicBoolean running = new AtomicBoolean(true);
 
-        // Lifeline thread: as soon as the PC closes stdin or ADB drops, exit cleanly
-        // so AudioRecord is released and the phone's internal speaker is unmuted.
         Thread lifeline = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -102,7 +99,7 @@ public final class Agent {
 
             InetAddress pcAddress = InetAddress.getByName(targetIp);
             socket = new DatagramSocket();
-            socket.setTrafficClass(0xB8); // DSCP EF (Expedited Forwarding) for low-latency Wi-Fi WMM VO/VI
+            socket.setTrafficClass(0xB8);
 
             recorder.startRecording();
             if (recorder.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
@@ -149,8 +146,6 @@ public final class Agent {
                     silentFramesCount = 0;
                 }
 
-                // Keep streaming audio for 50 packets (250 ms) after silence starts to preserve decay tails.
-                // After 250 ms of pure silence, switch to lightweight 12-byte keepalives every 400 ms.
                 if (silentFramesCount <= 50) {
                     writeHeader(headerView, seq++, FLAG_AUDIO);
                     socket.send(audioPacket);

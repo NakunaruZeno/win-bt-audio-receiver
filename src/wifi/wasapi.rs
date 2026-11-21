@@ -143,7 +143,6 @@ unsafe fn run_wasapi_loop(
     let clock_adjustment: Option<IAudioClockAdjustment> = audio_client.GetService().ok();
     let buffer_size_frames = audio_client.GetBufferSize()?;
 
-    // Pre-fill initial buffer with silence before starting engine
     if let Ok(data_ptr) = render_client.GetBuffer(buffer_size_frames) {
         slice::from_raw_parts_mut(data_ptr, (buffer_size_frames as usize) * 4).fill(0);
         let _ = render_client.ReleaseBuffer(buffer_size_frames, 0);
@@ -154,7 +153,6 @@ unsafe fn run_wasapi_loop(
         return Err(e);
     }
 
-    // Signal successful WASAPI initialization to caller
     let _ = init_tx.send(Ok(()));
 
     let mut task_index = 0u32;
@@ -203,18 +201,15 @@ unsafe fn run_wasapi_loop(
         let _ = render_client.ReleaseBuffer(frames_to_write, 0);
 
         if read_frames == 0 && avail == 0 {
-            // Stream paused or underrun; re-arm prebuffering so resumption starts cleanly
             prebuffering = true;
             continue;
         }
 
-        // Exponential moving average of ring buffer occupancy for zero-CPU clock drift control
         smoothed_fill = smoothed_fill * 0.98 + (avail as f32) * 0.02;
         tick_counter = tick_counter.wrapping_add(1);
         if tick_counter.is_multiple_of(50) {
             if let Some(ref clock) = clock_adjustment {
                 let error_frames = smoothed_fill - target_fill_frames;
-                // Proportional rate adjustment clamped within ±0.18% (imperceptible pitch shift)
                 let ratio = (1.0 + (error_frames / 48_000.0) * 0.08).clamp(0.9982, 1.0018);
                 let _ = clock.SetSampleRate((DEFAULT_SAMPLE_RATE as f32) * ratio);
             }
@@ -237,7 +232,6 @@ mod tests {
     #[test]
     fn wasapi_renderer_drains_ring_buffer_and_drops_cleanly() {
         let ring = Arc::new(SpscPcmRingBuffer::new(4096));
-        // Push 40 ms of near-silent test tone (amplitude 2 / 32767 so it is inaudible) into ring buffer
         let mut frame_bytes = vec![0u8; 48 * 40 * 4];
         for i in 0..(48 * 40) {
             let sample: i16 = if i % 100 < 50 { 2 } else { -2 };

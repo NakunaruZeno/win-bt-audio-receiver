@@ -2,16 +2,23 @@ pub const MAGIC: u16 = 0xA55A;
 pub const HEADER_SIZE: usize = 12;
 pub const DEFAULT_SAMPLE_RATE: u32 = 48_000;
 pub const DEFAULT_CHANNELS: u8 = 2;
-pub const FRAMES_PER_PACKET: usize = 240; // 5 ms at 48 kHz
+pub const FRAMES_PER_PACKET: usize = 240;
 pub const SAMPLES_PER_PACKET: usize = FRAMES_PER_PACKET * (DEFAULT_CHANNELS as usize);
-pub const PCM_BYTES_PER_PACKET: usize = SAMPLES_PER_PACKET * 2; // 960 bytes
-pub const MAX_UDP_PACKET_SIZE: usize = HEADER_SIZE + PCM_BYTES_PER_PACKET; // 972 bytes (< MTU)
+pub const PCM_BYTES_PER_PACKET: usize = SAMPLES_PER_PACKET * 2;
+pub const MAX_UDP_PACKET_SIZE: usize = HEADER_SIZE + PCM_BYTES_PER_PACKET;
 
 #[cfg(test)]
 pub const FLAG_AUDIO: u8 = 0x00;
 pub const FLAG_KEEPALIVE: u8 = 0x01;
+pub const FLAG_HELLO: u8 = 0x02;
+pub const FLAG_BYE: u8 = 0x04;
+
+/// 4-byte ACK sent back to the Android Companion App on `FLAG_HELLO`
+/// so the phone confirms LAN reachability immediately.
+pub const ACK_PACKET: [u8; 4] = [0x5A, 0xA5, 0x00, 0x01];
 
 pub const DEFAULT_UDP_PORT: u16 = 19480;
+pub const DISCOVERY_UDP_PORT: u16 = 19481;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PacketHeader {
@@ -55,6 +62,14 @@ impl PacketHeader {
     pub fn is_keepalive(&self) -> bool {
         (self.flags & FLAG_KEEPALIVE) != 0
     }
+
+    pub fn is_hello(&self) -> bool {
+        (self.flags & FLAG_HELLO) != 0
+    }
+
+    pub fn is_bye(&self) -> bool {
+        (self.flags & FLAG_BYE) != 0
+    }
 }
 
 #[cfg(test)]
@@ -75,6 +90,31 @@ mod tests {
         let parsed = PacketHeader::decode(&raw).expect("valid header");
         assert_eq!(parsed, orig);
         assert!(!parsed.is_keepalive());
+        assert!(!parsed.is_hello());
+        assert!(!parsed.is_bye());
+    }
+
+    #[test]
+    fn decodes_hello_and_bye_control_flags() {
+        let hello = PacketHeader {
+            seq: 0,
+            sample_rate: DEFAULT_SAMPLE_RATE,
+            channels: DEFAULT_CHANNELS,
+            flags: FLAG_HELLO,
+        };
+        let mut raw = [0u8; HEADER_SIZE];
+        hello.encode(&mut raw);
+        let parsed = PacketHeader::decode(&raw).unwrap();
+        assert!(parsed.is_hello());
+        assert!(!parsed.is_bye());
+
+        let bye = PacketHeader {
+            flags: FLAG_BYE,
+            ..hello
+        };
+        bye.encode(&mut raw);
+        let parsed_bye = PacketHeader::decode(&raw).unwrap();
+        assert!(parsed_bye.is_bye());
     }
 
     #[test]

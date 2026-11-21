@@ -1,8 +1,12 @@
 [package]
 name = "aethersora"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "AetherSora - Ultra-lightweight Windows Hybrid Wi-Fi 5GHz LAN & Bluetooth A2DP Sink Audio Receiver"
+description = "AetherSora - Ultra-lightweight Windows System Tray Universal Audio Receiver (Wi-Fi 5GHz Lossless + Bluetooth A2DP Sink)"
+
+[[bin]]
+name = "AetherSora"
+path = "src/main.rs"
 
 [dependencies.windows]
 version = "0.58.0"
@@ -12,12 +16,18 @@ features = [
     "Foundation",
     "Foundation_Collections",
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Media_Audio",
+    "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_System_Com",
     "Win32_System_Console",
+    "Win32_System_LibraryLoader",
     "Win32_System_Power",
+    "Win32_System_Registry",
     "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ]
 
 [profile.release]

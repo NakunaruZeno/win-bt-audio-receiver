@@ -1,7 +1,9 @@
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -9,10 +11,20 @@ use std::thread;
 use std::time::Duration;
 
 use crate::config::{load_config, save_adb_host};
+use crate::log;
 
-/// Pre-compiled 5.3 KB Android DEX agent embedded directly into the executable
-/// so `aethersora.exe` remains a single standalone file.
-const AGENT_DEX_BYTES: &[u8] = include_bytes!("../../android-agent/aether-agent.dex");
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Creates an `adb` Command with `CREATE_NO_WINDOW` so background probes and
+/// streaming under `#![windows_subsystem = "windows"]` never flash a console window.
+fn adb_command(program: impl AsRef<OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+/// Pre-compiled 5.3 KB Android DEX agent embedded directly into the executable.
+const AGENT_DEX_BYTES: &[u8] = include_bytes!("../../android/agent/aether-agent.dex");
 const REMOTE_DEX_PATH: &str = "/data/local/tmp/aether-agent.dex";
 
 pub struct AdbAgentProcess {
@@ -21,7 +33,6 @@ pub struct AdbAgentProcess {
 
 impl Drop for AdbAgentProcess {
     fn drop(&mut self) {
-        // Drop stdin lifeline first so Agent.java immediately unmutes phone speaker and exits.
         drop(self.child.stdin.take());
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -29,7 +40,7 @@ impl Drop for AdbAgentProcess {
 }
 
 pub fn find_adb_binary() -> Option<PathBuf> {
-    if Command::new("adb")
+    if adb_command("adb")
         .arg("version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -58,8 +69,8 @@ pub fn pair_wireless_adb(host_port: &str, code: &str) -> std::result::Result<(),
         "adb.exe not found in PATH or %LOCALAPPDATA%\\Android\\Sdk\\platform-tools".to_owned()
     })?;
 
-    println!("[ADB Pair] Pairing with {host_port}...");
-    let output = Command::new(&adb)
+    log::info(format!("[ADB Pair] Pairing with {host_port}..."));
+    let output = adb_command(&adb)
         .args(["pair", host_port, code])
         .output()
         .map_err(|e| format!("Failed to execute adb pair: {e}"))?;
@@ -67,7 +78,7 @@ pub fn pair_wireless_adb(host_port: &str, code: &str) -> std::result::Result<(),
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if output.status.success() && stdout.to_ascii_lowercase().contains("successfully paired") {
-        println!("[ADB Pair] {stdout}");
+        log::info(format!("[ADB Pair] {stdout}"));
         if let Some((ip, _)) = host_port.split_once(':') {
             let _ = save_adb_host(ip);
         }
@@ -75,6 +86,38 @@ pub fn pair_wireless_adb(host_port: &str, code: &str) -> std::result::Result<(),
     } else {
         Err(format!("adb pair failed: {stdout} {stderr}").trim().to_owned())
     }
+}
+
+/// Non-invasive readiness check called ONLY after passive mDNS detects
+/// `_adb-tls-connect._tcp` on LAN. Verifies an authorized device is reachable
+/// BEFORE `Auto` mode drops an active Bluetooth session.
+pub fn probe_wireless_adb_available(explicit_adb_host: Option<&str>) -> bool {
+    let Some(adb) = find_adb_binary() else {
+        return false;
+    };
+
+    if find_online_adb_device(&adb).is_some() {
+        return true;
+    }
+
+    let saved_cfg = load_config();
+    let candidate_host = explicit_adb_host.or(saved_cfg.adb_host.as_deref());
+
+    if let Some(mdns_endpoint) = discover_mdns_wireless_endpoint(&adb, candidate_host) {
+        if tcp_quick_reachable(&mdns_endpoint, Duration::from_millis(450)) {
+            let _ = adb_command(&adb)
+                .args(["connect", &mdns_endpoint])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .output();
+            if find_online_adb_device(&adb).is_some() {
+                let _ = save_adb_host(&mdns_endpoint);
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// Fast probe (<= 1.2s) for an available ADB device (Wireless Debugging over 5 GHz LAN or USB).
@@ -86,13 +129,12 @@ pub fn try_launch_android_agent(
 ) -> std::result::Result<AdbAgentProcess, String> {
     let adb = find_adb_binary().ok_or_else(|| "adb.exe not available".to_owned())?;
 
-    // 1. Try explicit `--adb-host` or cached host if it carries ip:port
     let saved_cfg = load_config();
     let candidate_host = explicit_adb_host.or(saved_cfg.adb_host.as_deref());
 
     if let Some(host) = candidate_host {
         if host.contains(':') && tcp_quick_reachable(host, Duration::from_millis(450)) {
-            let _ = Command::new(&adb)
+            let _ = adb_command(&adb)
                 .args(["connect", host])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -103,14 +145,12 @@ pub fn try_launch_android_agent(
         }
     }
 
-    // 2. Check already-online ADB devices first
     let mut serial = find_online_adb_device(&adb);
 
-    // 3. If none online yet, check `adb mdns services` for `_adb-tls-connect._tcp` on 5 GHz LAN
     if serial.is_none() {
         if let Some(mdns_endpoint) = discover_mdns_wireless_endpoint(&adb, candidate_host) {
             if tcp_quick_reachable(&mdns_endpoint, Duration::from_millis(450)) {
-                let _ = Command::new(&adb)
+                let _ = adb_command(&adb)
                     .args(["connect", &mdns_endpoint])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
@@ -124,18 +164,16 @@ pub fn try_launch_android_agent(
     let device_serial =
         serial.ok_or_else(|| "No active Android Wireless/USB ADB device reachable on LAN".to_owned())?;
 
-    // Determine PC's LAN IPv4 address reachable by the Android phone
     let phone_ip_hint = extract_ipv4_prefix(&device_serial)
         .or_else(|| candidate_host.and_then(extract_ipv4_prefix));
     let pc_lan_ip = resolve_pc_lan_ip(phone_ip_hint.as_deref())
         .ok_or_else(|| "Could not determine PC LAN IPv4 address (is PC connected to Wi-Fi/LAN?)".to_owned())?;
 
-    // Write embedded 5.3 KB DEX to local temp and push to /data/local/tmp/aether-agent.dex
     let local_dex = env::temp_dir().join("aether-agent.dex");
     fs::write(&local_dex, AGENT_DEX_BYTES)
         .map_err(|e| format!("Failed to write temp aether-agent.dex: {e}"))?;
 
-    let push_status = Command::new(&adb)
+    let push_status = adb_command(&adb)
         .args([
             "-s",
             &device_serial,
@@ -152,11 +190,10 @@ pub fn try_launch_android_agent(
         return Err("adb push aether-agent.dex failed (device offline or unauthorized)".to_owned());
     }
 
-    // Launch `app_process` with piped stdin (lifeline) and stdout (`READY` handshake)
     let remote_cmd = format!(
         "CLASSPATH={REMOTE_DEX_PATH} app_process / com.aethersora.Agent {pc_lan_ip} {udp_port}"
     );
-    let mut child = Command::new(&adb)
+    let mut child = adb_command(&adb)
         .args(["-s", &device_serial, "shell", &remote_cmd])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -188,9 +225,9 @@ pub fn try_launch_android_agent(
 
     match ready_rx.recv_timeout(Duration::from_millis(1800)) {
         Ok(Ok(())) => {
-            println!(
+            log::info(format!(
                 "[Wi-Fi LAN] Android agent READY on '{device_serial}' -> streaming 48 kHz 16-bit Stereo PCM to {pc_lan_ip}:{udp_port}"
-            );
+            ));
             Ok(AdbAgentProcess { child })
         }
         Ok(Err(agent_err)) => {
@@ -216,7 +253,7 @@ fn tcp_quick_reachable(host_port: &str, timeout: Duration) -> bool {
 }
 
 fn find_online_adb_device(adb: &PathBuf) -> Option<String> {
-    let output = Command::new(adb).arg("devices").output().ok()?;
+    let output = adb_command(adb).arg("devices").output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
 
     let mut usb_fallback = None;
@@ -227,7 +264,6 @@ fn find_online_adb_device(adb: &PathBuf) -> Option<String> {
         if state != "device" {
             continue;
         }
-        // Prefer wireless (ip:port or _adb-tls-connect) over USB if both exist
         if serial.contains(':') || serial.contains("_adb-tls-connect") {
             return Some(serial.to_owned());
         }
@@ -239,7 +275,7 @@ fn find_online_adb_device(adb: &PathBuf) -> Option<String> {
 }
 
 fn discover_mdns_wireless_endpoint(adb: &PathBuf, preferred_ip_hint: Option<&str>) -> Option<String> {
-    let output = Command::new(adb).args(["mdns", "services"]).output().ok()?;
+    let output = adb_command(adb).args(["mdns", "services"]).output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let ip_prefix = preferred_ip_hint.and_then(extract_ipv4_prefix);
 
@@ -270,7 +306,7 @@ fn extract_ipv4_prefix(s: &str) -> Option<String> {
     Some(addr.to_string())
 }
 
-fn resolve_pc_lan_ip(phone_ip_hint: Option<&str>) -> Option<Ipv4Addr> {
+pub(crate) fn resolve_pc_lan_ip(phone_ip_hint: Option<&str>) -> Option<Ipv4Addr> {
     let target_ip: Ipv4Addr = phone_ip_hint
         .and_then(|s| s.parse().ok())
         .unwrap_or(Ipv4Addr::new(192, 168, 1, 1));

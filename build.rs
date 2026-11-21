@@ -6,7 +6,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=assets/icon.rc");
     println!("cargo:rerun-if-changed=assets/icon.ico");
-    println!("cargo:rerun-if-changed=android-agent/aether-agent.dex");
+    println!("cargo:rerun-if-changed=android/agent/aether-agent.dex");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let rc_file = manifest_dir.join("assets").join("icon.rc");

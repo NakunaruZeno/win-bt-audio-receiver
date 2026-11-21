@@ -11,6 +11,7 @@ use windows::Media::Audio::{
 };
 
 use crate::config::{load_saved_bt_device, save_bt_device, CONFIG_FILE_NAME};
+use crate::log;
 use crate::signal::{set_streaming_keep_awake, AppSignal, WakeEvent};
 
 const RECONNECT_DEBOUNCE: Duration = Duration::from_millis(800);
@@ -27,6 +28,13 @@ pub enum TargetQuery {
     DefaultOrCached,
     ForceScan,
     Query(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum BtResolveResult {
+    Selected { id: String, name: String },
+    NonePaired,
+    MultipleNeedChoice(Vec<PairedDevice>),
 }
 
 pub fn list_paired_devices() -> Result<Vec<PairedDevice>> {
@@ -85,8 +93,9 @@ fn prompt_select_device(devices: &[PairedDevice]) -> Option<PairedDevice> {
         let _ = io::stdout().flush();
 
         let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            return None;
+        match io::stdin().read_line(&mut input) {
+            Ok(0) | Err(_) => return None,
+            Ok(_) => {}
         }
         let trimmed = input.trim();
         if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("quit") {
@@ -135,33 +144,86 @@ fn find_device_by_query(devices: &[PairedDevice], query: &str) -> Option<PairedD
 fn persist_and_return(dev: Option<PairedDevice>) -> Option<(String, String)> {
     let dev = dev?;
     if let Err(e) = save_bt_device(&dev.id, &dev.name) {
-        eprintln!("[Warning] Failed to save {CONFIG_FILE_NAME}: {e}");
+        log::error(format!("[Warning] Failed to save {CONFIG_FILE_NAME}: {e}"));
     }
     Some((dev.id, dev.name))
 }
 
-fn scan_and_select_device() -> Result<Option<(String, String)>> {
-    println!("[Bluetooth] Scanning paired Bluetooth audio devices...");
+fn scan_and_select_device_interactive() -> Result<BtResolveResult> {
+    log::info("[Bluetooth] Scanning paired Bluetooth audio devices...");
     let devices = list_paired_devices()?;
-    Ok(persist_and_return(prompt_select_device(&devices)))
+    if devices.is_empty() {
+        log::info(
+            "No paired Bluetooth audio devices found.\n\
+             Pair your phone with Windows via Settings -> Bluetooth & devices first.",
+        );
+        return Ok(BtResolveResult::NonePaired);
+    }
+    match persist_and_return(prompt_select_device(&devices)) {
+        Some((id, name)) => Ok(BtResolveResult::Selected { id, name }),
+        None => Ok(BtResolveResult::NonePaired),
+    }
 }
 
-pub fn resolve_target_device(target: &TargetQuery) -> Result<Option<(String, String)>> {
+fn scan_and_select_device_headless() -> Result<BtResolveResult> {
+    log::info("[Bluetooth] Scanning paired Bluetooth audio devices (Tray mode)...");
+    let devices = list_paired_devices()?;
+    match devices.len() {
+        0 => {
+            log::info("[Bluetooth] No paired Bluetooth audio source devices found.");
+            Ok(BtResolveResult::NonePaired)
+        }
+        1 => {
+            let dev = devices[0].clone();
+            log::info(format!(
+                "[Bluetooth] Auto-selected the only paired device: {}",
+                dev.name
+            ));
+            let _ = save_bt_device(&dev.id, &dev.name);
+            Ok(BtResolveResult::Selected {
+                id: dev.id,
+                name: dev.name,
+            })
+        }
+        _ => {
+            log::info(format!(
+                "[Bluetooth] Found {} paired devices; waiting for selection from System Tray.",
+                devices.len()
+            ));
+            Ok(BtResolveResult::MultipleNeedChoice(devices))
+        }
+    }
+}
+
+pub fn resolve_target_device(target: &TargetQuery, interactive: bool) -> Result<BtResolveResult> {
     match target {
         TargetQuery::DefaultOrCached => {
             if let Some((id, name)) = load_saved_bt_device() {
-                println!(
+                log::info(format!(
                     "[Bluetooth] Using cached device '{name}' from {CONFIG_FILE_NAME}"
-                );
-                return Ok(Some((id, name)));
+                ));
+                return Ok(BtResolveResult::Selected { id, name });
             }
-            println!("[Bluetooth] No saved {CONFIG_FILE_NAME} found.");
-            scan_and_select_device()
+            log::info(format!("[Bluetooth] No saved {CONFIG_FILE_NAME} found."));
+            if interactive {
+                scan_and_select_device_interactive()
+            } else {
+                scan_and_select_device_headless()
+            }
         }
-        TargetQuery::ForceScan => scan_and_select_device(),
+        TargetQuery::ForceScan => {
+            if interactive {
+                scan_and_select_device_interactive()
+            } else {
+                scan_and_select_device_headless()
+            }
+        }
         TargetQuery::Query(query) => {
             let devices = list_paired_devices()?;
-            Ok(persist_and_return(find_device_by_query(&devices, query)))
+            match persist_and_return(find_device_by_query(&devices, query)) {
+                Some((id, name)) => Ok(BtResolveResult::Selected { id, name }),
+                None => Ok(BtResolveResult::NonePaired),
+            }
         }
     }
 }
@@ -201,8 +263,8 @@ impl WatcherGuard {
                     if let Some(dev) = info {
                         if let Ok(id) = dev.Id() {
                             if id == target_added {
-                                println!(
-                                    "[Bluetooth Watcher] Target device appeared; triggering reconnect."
+                                log::info(
+                                    "[Bluetooth Watcher] Target device appeared; triggering reconnect.",
                                 );
                                 signal_added.request_reconnect();
                             }
@@ -277,15 +339,15 @@ impl BtSession {
         auto_reconnect: bool,
         signal: Arc<AppSignal>,
     ) -> Result<Self> {
-        println!("[Mode: Bluetooth A2DP Sink] Initializing WinRT AudioPlaybackConnection...");
+        log::info("[Mode: Bluetooth A2DP Sink] Initializing WinRT AudioPlaybackConnection...");
         let was_opened = Arc::new(AtomicBool::new(false));
         let active_conn = match connect_and_open(&device_id, &device_name, &signal, &was_opened) {
             Ok((conn, _opened)) => Some(conn),
             Err(err) => {
-                eprintln!(
+                log::error(format!(
                     "[Bluetooth Waiting] Initial TryCreateFromId/Start failed for '{device_name}': {err}. \
                      Waiting for device..."
-                );
+                ));
                 None
             }
         };
@@ -310,22 +372,33 @@ impl BtSession {
         })
     }
 
-    pub fn run_until_exit(&mut self) {
-        println!(
-            "[Bluetooth] Running in background (0% CPU idle). Press Ctrl+C to disconnect and exit."
+    pub fn is_connected(&self) -> bool {
+        is_stream_opened(&self.active_conn)
+    }
+
+    pub fn run_until_exit(&mut self, on_state_change: impl Fn(bool)) {
+        log::info(
+            "[Bluetooth] Running in background (0% CPU idle). Use System Tray or Ctrl+C to exit.",
         );
+
+        let mut last_connected = is_stream_opened(&self.active_conn);
 
         loop {
             match self.signal.wait_for_event() {
-                WakeEvent::Exit => break,
+                WakeEvent::Exit | WakeEvent::SwitchMode(_) | WakeEvent::AutoUpgrade(_) => break,
                 WakeEvent::StateSync => {
+                    let now_connected = is_stream_opened(&self.active_conn);
                     sync_watcher_and_power(
-                        is_stream_opened(&self.active_conn),
+                        now_connected,
                         self.auto_reconnect,
                         &self.device_id,
                         &self.signal,
                         &mut self.watcher,
                     );
+                    if now_connected != last_connected {
+                        last_connected = now_connected;
+                        on_state_change(now_connected);
+                    }
                     continue;
                 }
                 WakeEvent::Reconnect => {}
@@ -343,21 +416,25 @@ impl BtSession {
                     &self.signal,
                     &mut self.watcher,
                 );
+                if !last_connected {
+                    last_connected = true;
+                    on_state_change(true);
+                }
                 continue;
             }
 
             match &self.active_conn {
                 Some(conn) => {
-                    println!(
+                    log::info(format!(
                         "[Bluetooth Reconnect] Attempting to open audio stream for '{}'...",
                         self.device_name
-                    );
+                    ));
                     if let Err(err) =
                         try_open_stream(&conn.handle, &self.device_name, &self.was_opened, None)
                     {
-                        eprintln!(
+                        log::error(format!(
                             "[Bluetooth Reconnect] OpenAsync error ({err}); recreating handle..."
-                        );
+                        ));
                         if let Some(mut old) = self.active_conn.take() {
                             old.close_cleanly();
                         }
@@ -372,10 +449,10 @@ impl BtSession {
                     }
                 }
                 None => {
-                    println!(
+                    log::info(format!(
                         "[Bluetooth Reconnect] Creating AudioPlaybackConnection for '{}'...",
                         self.device_name
-                    );
+                    ));
                     match connect_and_open(
                         &self.device_id,
                         &self.device_name,
@@ -383,18 +460,25 @@ impl BtSession {
                         &self.was_opened,
                     ) {
                         Ok((new_conn, _)) => self.active_conn = Some(new_conn),
-                        Err(err) => eprintln!("[Bluetooth Reconnect] Still waiting ({err})."),
+                        Err(err) => {
+                            log::error(format!("[Bluetooth Reconnect] Still waiting ({err})."));
+                        }
                     }
                 }
             }
 
+            let now_connected = is_stream_opened(&self.active_conn);
             sync_watcher_and_power(
-                is_stream_opened(&self.active_conn),
+                now_connected,
                 self.auto_reconnect,
                 &self.device_id,
                 &self.signal,
                 &mut self.watcher,
             );
+            if now_connected != last_connected {
+                last_connected = now_connected;
+                on_state_change(now_connected);
+            }
         }
     }
 }
@@ -430,18 +514,18 @@ fn sync_watcher_and_power(
     if opened {
         if let Some(mut guard) = watcher.take() {
             guard.stop_cleanly();
-            println!("[Bluetooth Watcher] Stopped while streaming (zero background polling).");
+            log::info("[Bluetooth Watcher] Stopped while streaming (zero background polling).");
         }
     } else if auto_reconnect && watcher.is_none() {
         match WatcherGuard::start(device_id.to_owned(), Arc::clone(signal)) {
             Ok(guard) => {
                 *watcher = Some(guard);
-                println!(
-                    "[Bluetooth Watcher] Armed on-demand to auto-reconnect when device returns."
+                log::info(
+                    "[Bluetooth Watcher] Armed on-demand to auto-reconnect when device returns.",
                 );
             }
             Err(err) => {
-                eprintln!("[Warning] Failed to start DeviceWatcher: {err}");
+                log::error(format!("[Warning] Failed to start DeviceWatcher: {err}"));
             }
         }
     }
@@ -468,20 +552,25 @@ fn connect_and_open(
                     match state {
                         AudioPlaybackConnectionState::Opened => {
                             was_opened_clone.store(true, Ordering::SeqCst);
-                            println!("[Bluetooth State] '{name_owned}' -> Opened (stream active).");
+                            log::info(format!(
+                                "[Bluetooth State] '{name_owned}' -> Opened (stream active)."
+                            ));
                             signal_clone.request_state_sync();
                         }
                         AudioPlaybackConnectionState::Closed => {
                             let previously_opened = was_opened_clone.swap(false, Ordering::SeqCst);
                             if previously_opened && !signal_clone.is_exit_requested() {
-                                println!(
+                                log::info(format!(
                                     "[Bluetooth State] '{name_owned}' -> Closed (disconnected)."
-                                );
+                                ));
                                 signal_clone.request_state_sync();
                             }
                         }
                         other => {
-                            println!("[Bluetooth State] '{name_owned}' -> Unknown ({})", other.0);
+                            log::info(format!(
+                                "[Bluetooth State] '{name_owned}' -> Unknown ({})",
+                                other.0
+                            ));
                         }
                     }
                 }
@@ -513,11 +602,13 @@ fn try_open_stream(
     if matches!(connection.State(), Ok(AudioPlaybackConnectionState::Opened)) {
         was_opened.store(true, Ordering::SeqCst);
         match start_time {
-            Some(t0) => println!(
+            Some(t0) => log::info(format!(
                 "[Bluetooth Connected] '{device_name}' is already streaming audio! ({:.0} ms)",
                 t0.elapsed().as_secs_f64() * 1000.0
-            ),
-            None => println!("[Bluetooth Reconnected] '{device_name}' is streaming audio!"),
+            )),
+            None => log::info(format!(
+                "[Bluetooth Reconnected] '{device_name}' is streaming audio!"
+            )),
         }
         return Ok(true);
     }
@@ -528,40 +619,42 @@ fn try_open_stream(
         AudioPlaybackConnectionOpenResultStatus::Success => {
             was_opened.store(true, Ordering::SeqCst);
             match start_time {
-                Some(t0) => println!(
+                Some(t0) => log::info(format!(
                     "[Bluetooth Connected] '{device_name}' is streaming audio! ({:.0} ms)",
                     t0.elapsed().as_secs_f64() * 1000.0
-                ),
-                None => println!("[Bluetooth Reconnected] '{device_name}' is streaming audio!"),
+                )),
+                None => log::info(format!(
+                    "[Bluetooth Reconnected] '{device_name}' is streaming audio!"
+                )),
             }
             Ok(true)
         }
         AudioPlaybackConnectionOpenResultStatus::RequestTimedOut => {
-            println!(
+            log::info(format!(
                 "[Bluetooth Waiting] OpenAsync timed out for '{device_name}'. \
                  Ensure Bluetooth is on and in range."
-            );
+            ));
             Ok(false)
         }
         AudioPlaybackConnectionOpenResultStatus::DeniedBySystem => {
-            println!(
+            log::info(format!(
                 "[Bluetooth Waiting] System denied audio connection for '{device_name}'. \
                  Will retry when device status updates."
-            );
+            ));
             Ok(false)
         }
         AudioPlaybackConnectionOpenResultStatus::UnknownFailure => {
             let ext = open_result.ExtendedError().map(|h| h.0).unwrap_or_default();
-            println!(
+            log::info(format!(
                 "[Bluetooth Waiting] OpenAsync failed for '{device_name}' (ExtendedError: 0x{ext:08X})."
-            );
+            ));
             Ok(false)
         }
         other => {
-            println!(
+            log::info(format!(
                 "[Bluetooth Waiting] Unexpected open status ({}) for '{device_name}'.",
                 other.0
-            );
+            ));
             Ok(false)
         }
     }

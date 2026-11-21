@@ -109,10 +109,9 @@ impl SpscPcmRingBuffer {
         let w = self.write_frames.load(Ordering::Acquire);
         let avail = w.wrapping_sub(r);
 
-        // If buffer overflowed badly (> 120 ms queued), skip stale frames to snap back to low latency.
-        let max_allowed_queue = 48 * 120; // 120 ms at 48 kHz = 5760 frames
+        let max_allowed_queue = 48 * 120;
         let effective_r = if avail > max_allowed_queue {
-            w.wrapping_sub(48 * 25) // Snap to 25 ms
+            w.wrapping_sub(48 * 25)
         } else {
             r
         };
@@ -138,7 +137,6 @@ impl SpscPcmRingBuffer {
         self.read_frames
             .store(effective_r.wrapping_add(to_read), Ordering::Release);
 
-        // Conceal any remaining underrun frames with smooth exponential decay to 0.
         let mut l = last_sample.0 as i32;
         let mut r_ch = last_sample.1 as i32;
         for i in to_read..requested_frames {
@@ -165,7 +163,7 @@ mod tests {
     #[test]
     fn spsc_push_and_pop_preserves_stereo_samples() {
         let rb = SpscPcmRingBuffer::new(1024);
-        let mut in_bytes = [0u8; 16]; // 4 stereo frames
+        let mut in_bytes = [0u8; 16];
         for f in 0..4 {
             let l = ((f + 1) * 1000) as i16;
             let r = -l;

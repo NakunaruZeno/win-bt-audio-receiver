@@ -2,205 +2,174 @@
   <img src="assets/logo.svg" width="128" height="128" alt="AetherSora Logo">
 </p>
 
-# AetherSora: Windows Hybrid Wi-Fi 5GHz LAN & Bluetooth Audio Receiver
+# AetherSora: Windows System Tray Universal Audio Receiver
 
-AetherSora is an ultra-lightweight Windows console application written in Rust that turns your Windows PC into a high-quality wireless speaker for your phone. It combines a **48 kHz 16-bit Stereo Lossless Wi-Fi LAN mode** (via Android Wireless Debugging, with zero APK installed) and an automatic, strictly isolated **Bluetooth A2DP Sink fallback** when Wi-Fi is unavailable (such as when using mobile data).
-
----
-
-## Mode Comparison
-
-AetherSora enforces strict compile-time mutual exclusion (`ActiveTransport`): **only one transport backend exists in memory at a time**. When Wi-Fi mode runs, zero Bluetooth WinRT handles or watchers are created; when Bluetooth fallback runs, zero UDP sockets, WASAPI threads, or ADB processes exist.
-
-| Feature | Wi-Fi 5 GHz LAN Mode (Primary) | Bluetooth A2DP Sink Mode (Fallback) |
-| :--- | :--- | :--- |
-| **Audio Quality** | **48 kHz 16-bit Stereo Lossless PCM** (1.536 Mbps) | Standard Windows SBC Stereo (44.1 kHz, ~328 kbps) |
-| **Latency** | ~15 - 30 ms (suitable for video and gaming) | ~150 - 250 ms |
-| **2.4 GHz BLE Mouse/Keyboard Interference** | None (runs on 5 GHz Wi-Fi LAN) | Possible on shared combo Wi-Fi/BT adapters |
-| **PC Resource Footprint** | ~1.8 - 4 MB RAM, < 0.5% CPU | ~4.2 - 4.6 MB RAM, 0% CPU idle |
-| **Phone Requirement** | Android 11+ with Wireless Debugging (no APK) | Any Bluetooth-paired Android or iOS device |
+AetherSora is an ultra-lightweight (~422 KB) Windows System Tray audio receiver written in Rust with **zero third-party Rust crates** beyond Microsoft's official `windows` crate. It launches silently into the Windows System Tray (zero terminal window) with native Windows Toast notifications and turns your PC into a low-latency wireless speaker over **Wi-Fi 5 GHz (48 kHz Lossless PCM)** or **Bluetooth A2DP Sink**.
 
 ---
 
-## System Requirements
+## Download & Installation
 
-- **Operating System:** Windows 10 Version 2004 (Build 19041) or newer, or Windows 11.
-- **For Wi-Fi 5 GHz LAN Mode (Optional, Android 11+):**
-  - PC and phone connected to the same local network (5 GHz Wi-Fi strongly recommended).
-  - Android Platform Tools (`adb.exe`) available in `PATH` or `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`.
-- **For Bluetooth Fallback Mode (Android & iOS):**
-  - A Windows Bluetooth adapter supporting A2DP Sink.
-- **For Building from Source:**
-  - Rust toolchain (`rustc` / `cargo` via `rustup`) with the `x86_64-pc-windows-msvc` target.
+### Requirements
+- **PC:** Windows 10 (Version 2004 / Build 19041+) or Windows 11 (`x86_64-pc-windows-msvc` Rust toolchain to build from source).
+- **Phone:**
+  - **Bluetooth mode:** Any Android or iOS phone (zero phone app required).
+  - **Wi-Fi Companion App mode:** Android 10+ on the same Wi-Fi LAN (no Developer Mode, no ADB).
+  - **Wi-Fi ADB Wireless mode:** Android 11+ on the same Wi-Fi LAN + `adb.exe` on PC (`winget install Google.PlatformTools`).
 
----
+### Install PC Receiver (`AetherSora.exe`)
 
-## Installation
-
-### Option A: Install Directly via Cargo (Fastest)
-
-If you already have Rust installed:
-
+**Option A — Install directly with Cargo:**
 ```powershell
 cargo install --git https://github.com/NakunaruZeno/win-bt-audio-receiver.git
 ```
 
-Once finished, you can run `aethersora` from any terminal.
+**Option B — Clone and build from source:**
+```powershell
+git clone https://github.com/NakunaruZeno/win-bt-audio-receiver.git
+cd win-bt-audio-receiver
+cargo build --release
+```
 
-### Option B: Build from Source
+The standalone executable (~422 KB, with pure Win32 System Tray, embedded 5.3 KB ADB agent, and Chrono-Star icon) is produced at:
+```text
+target\release\AetherSora.exe
+```
 
-1. Install the Rust toolchain (skip if already installed, then reopen PowerShell):
-   ```powershell
-   winget install Rustlang.Rustup
-   ```
+### Android Companion App (Optional — For Wi-Fi Lossless Without Developer Mode)
 
-2. Clone the repository and build the optimized release executable:
-   ```powershell
-   git clone https://github.com/NakunaruZeno/win-bt-audio-receiver.git
-   cd win-bt-audio-receiver
-   cargo build --release
-   ```
-
-3. Your standalone executable (~368 KB, with the 5.3 KB Android agent and Windows icon embedded inside) is ready at:
-   ```text
-   target\release\aethersora.exe
-   ```
+A pre-built, signed **24.5 KB** APK is included in this repository:
+```text
+android\companion\AetherSora-Companion.apk
+```
+Copy it to your Android 10+ phone and install directly. *(To rebuild the APK locally using your installed Android SDK + JDK, run `powershell -ExecutionPolicy Bypass -File .\android\companion\build.ps1`.)*
 
 ---
 
-## Step-by-Step Setup Guide
+## Quick Setup Guide
 
-### Part 1: Bluetooth Setup (Works on Android & iOS, Required for Fallback)
+Double-click `AetherSora.exe` to start immediately in the **Windows System Tray** (default mode is **Auto** — no terminal window opens, and Windows Toast notifications report connection status).
 
-1. On Windows, open **Settings** (`Win + I`) -> **Bluetooth & devices** -> **Add device** -> **Bluetooth**, and pair your phone.
-2. Run AetherSora once in Bluetooth mode to scan and cache your phone's Device ID:
-   ```powershell
-   .\target\release\aethersora.exe --mode bt --scan
-   ```
-3. Select your phone from the list. AetherSora saves it to `device_id.cfg` next to the executable so future Bluetooth connections open automatically.
+Pick the connection path that fits your device:
 
-### Part 2: Wi-Fi 5 GHz LAN Lossless Setup (Optional, Android 11+ Only)
+### Option 1: Wi-Fi 5 GHz Companion App (Android 10+ — Recommended for Most Users)
+1. Start `AetherSora.exe` on your PC in **Auto** or **Wi-Fi 5GHz (Companion App)** mode.
+   - If Windows Defender Firewall prompts on first launch, click **Allow access** (UDP `19480` audio + UDP `19481` LAN discovery).
+2. Install and open `android\companion\AetherSora-Companion.apk` on your phone. It automatically discovers your PC on Wi-Fi LAN.
+3. Tap **Connect & Stream Lossless** and accept Android's capture prompt.
+   - **Auto-mute phone speaker** is enabled by default to set phone media volume to `0` (eliminating speaker echo) and automatically restores your previous volume when you disconnect. *(Uncheck it if your Android ROM silences internal capture at volume 0.)*
 
-No APK needs to be installed on your phone. AetherSora pushes a temporary 5.3 KB capture agent into RAM over ADB and automatically cleans it up when you exit.
+### Option 2: Bluetooth A2DP Sink (Android & iOS — Zero Phone App)
+1. Pair your phone with Windows via **Settings (`Win + I`) -> Bluetooth & devices -> Add device -> Bluetooth**.
+2. Right-click the AetherSora icon in the System Tray -> **Bluetooth Device -> Scan / Refresh Paired Devices**, then click your phone.
 
-1. **Install ADB on Windows** (skip if you already have Android Studio or Platform Tools):
+### Option 3: Wi-Fi 5 GHz ADB Wireless (Android 11+ — Zero APK, All Apps, Auto-Mute)
+1. Install ADB on Windows if not already installed:
    ```powershell
    winget install Google.PlatformTools
    ```
-   *(Reopen PowerShell after installing so `adb` is recognized. AetherSora also auto-detects `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`.)*
-
-2. **Enable Wireless Debugging on Android:**
-   - Open **Settings -> About phone** and tap **Build number** (or **OS version** on Xiaomi HyperOS/MIUI) 7 times to unlock **Developer options**.
-   - Open **Settings -> Developer options -> Wireless debugging** and toggle it **On**.
-   - When prompted for your home Wi-Fi, check **"Always allow on this network"**. *(For security, Android automatically turns off Wireless Debugging whenever you leave your home Wi-Fi or switch to mobile data.)*
-
-3. **Pair your PC and Android phone once:**
-   - Inside the **Wireless debugging** screen, tap **Pair device with pairing code**.
-   - A popup will appear displaying a **6-digit pairing code** and a **Pairing IP address & Port** (note: this pairing port is different from the port shown on the outer Wireless Debugging screen).
-   - **Keep that popup open on your phone screen**, then run on your PC:
-     ```powershell
-     .\target\release\aethersora.exe --pair <IP:Pairing_Port> <6_Digit_Code>
-     ```
-     Example:
-     ```powershell
-     .\target\release\aethersora.exe --pair 192.168.1.50:41235 123456
-     ```
-
-4. **Start streaming in Auto mode:**
+   *(AetherSora also auto-detects `%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe`.)*
+2. On Android, enable **Settings -> Developer options -> Wireless debugging** and check **"Always allow on this network"** for your home Wi-Fi.
+3. Tap **Pair device with pairing code**, keep the popup open, and pair once using the IP and **pairing port inside the popup**:
    ```powershell
-   .\target\release\aethersora.exe
+   .\target\release\AetherSora.exe --pair 192.168.1.50:41235 123456
    ```
-   - On first launch, if **Windows Defender Firewall** asks for network permission, click **Allow access** so AetherSora can receive audio UDP packets on port `19480`.
-   - Your phone will automatically be discovered over LAN mDNS (`_adb-tls-connect._tcp`) and begin streaming uncompressed 48 kHz Stereo PCM to your PC speakers.
+4. Double-click `AetherSora.exe` — Auto mode connects over 5 GHz Wi-Fi automatically.
 
 ---
 
-## Daily Usage & CLI Reference
+## System Tray Controls & Transport Modes
 
-```powershell
-# Default Auto Mode: tries Wi-Fi 5 GHz LAN first; falls back to Bluetooth if Wi-Fi is unavailable
-.\aethersora.exe
+**Click or right-click** the Chrono-Star icon in the System Tray to:
+- **Hot-switch modes:** `Auto`, `Wi-Fi 5GHz (Companion App)`, `Wi-Fi 5GHz (ADB Wireless)`, or `Bluetooth A2DP Sink`.
+- **Bluetooth Device:** Select any paired phone directly or run **Scan / Refresh Paired Devices**.
+- **Start with Windows:** Toggle auto-launch at sign-in (`HKCU\...\Run\AetherSora`).
+- **Show Debug Log:** Open a native Win32 read-only live log viewer (closing the window only hides it without stopping AetherSora).
+- **Open Config Folder** / **Exit AetherSora**.
 
-# Force Wi-Fi 5 GHz LAN mode only (never initializes Bluetooth)
-.\aethersora.exe --mode wifi
+### Mode Comparison
 
-# Force Bluetooth A2DP Sink mode only (skips Wi-Fi/ADB probe completely)
-.\aethersora.exe --mode bt
+AetherSora enforces compile-time mutual exclusion (`enum ActiveTransport { WifiAdb, WifiApp, Bluetooth }`): **only one audio transport exists in memory at any moment**. In **Auto** mode, when running on Bluetooth fallback, a 0% CPU passive watcher listens on UDP `19480`/`19481` and mDNS `224.0.0.251:5353` so connecting the Companion App or re-enabling Wireless Debugging automatically drops Bluetooth and upgrades to 48 kHz Wi-Fi Lossless.
 
-# Manually connect and cache a specific Android Wireless Debugging IP:Port
-.\aethersora.exe --adb-host 192.168.1.50:37329
-
-# Set the Wi-Fi WASAPI jitter buffer target in milliseconds (range: 10..80, default: 20)
-.\aethersora.exe --buffer-ms 20
-
-# Re-scan paired Bluetooth devices and overwrite cached Bluetooth device in device_id.cfg
-.\aethersora.exe --scan
-
-# List all paired Bluetooth audio source devices and exit
-.\aethersora.exe --list
-
-# Connect directly to a paired Bluetooth device matching a name or ID substring
-.\aethersora.exe --device "Phone"
-
-# Disable on-demand Bluetooth DeviceWatcher auto-reconnect for minimal footprint
-.\aethersora.exe --no-reconnect
-
-# Display CLI help
-.\aethersora.exe --help
-```
-
-Press `Ctrl+C` (or close the console window) to cleanly close the active audio stream and immediately restore sound to your phone's internal speaker.
-
-### How Automatic Fallback Works (`--mode auto`)
-
-1. At startup, AetherSora quickly probes for your paired Android phone on the local Wi-Fi network via ADB mDNS / cached host.
-2. If found, it launches `WifiSession` (48 kHz Lossless PCM over UDP -> WASAPI Event-Driven `"Pro Audio"` renderer). Bluetooth is never touched.
-3. If the phone is not on Wi-Fi (e.g., on 4G/5G mobile data) or drops off Wi-Fi mid-session (> 2.5 s with no audio or keepalive packets), AetherSora completely tears down `WifiSession` first (releasing WASAPI, UDP, and ADB), waits 200 ms, and seamlessly starts `BtSession` (Bluetooth A2DP Sink).
+| Mode | Best For | Phone Setup | Audio Quality & Latency | PC Footprint |
+| :--- | :--- | :--- | :--- | :--- |
+| **Auto** (`--mode auto`) | Hands-free daily use | Auto-upgrades BT <-> Companion App <-> ADB Wireless | Best available (up to 48 kHz Lossless) | ~1.8-5.0 MB RAM, 0% CPU idle |
+| **Wi-Fi Companion App** (`--mode wifi-app`) | Android 10+ without Dev Mode | 24.5 KB APK, 1-tap LAN discovery + auto-mute | 48 kHz 16-bit Stereo PCM (~15-30 ms) | ~1.77 MB RAM standby, < 0.5% CPU |
+| **Wi-Fi ADB Wireless** (`--mode wifi-adb`) | Android 11+ power users | Wireless Debugging + one-time `--pair` (zero APK) | 48 kHz 16-bit Stereo PCM (~15-30 ms) | ~1.8-4.0 MB RAM, < 0.5% CPU |
+| **Bluetooth A2DP Sink** (`--mode bt`) | Android & iOS zero-app setup | Windows Bluetooth pairing only | Windows SBC Stereo (44.1 kHz, ~150-250 ms) | ~4.2-4.6 MB RAM, 0% CPU idle |
 
 ---
 
 ## Troubleshooting
 
-### `adb pair` fails with `error: protocol fault (couldn't read status message)`
-- Verify the IP address has no typos (e.g., `192.168.x.x:port`).
-- Make sure you are using the **port inside the "Pair device with pairing code" popup**, not the outer port on the main Wireless Debugging page.
-- Keep the pairing popup open and the phone screen awake until the command succeeds.
+### Companion App does not discover the PC on LAN
+- Ensure AetherSora PC is in **Auto** or **Wi-Fi 5GHz (Companion App)** mode.
+- Allow `AetherSora.exe` through **Windows Defender Firewall** for UDP ports `19480` and `19481` (especially if your Windows Wi-Fi profile is set to **Public**). You can also enter the PC's Wi-Fi IP manually in the app.
 
-### Connected in Wi-Fi mode, but no sound plays on the PC
-1. **Disconnect Bluetooth audio on your phone:** If your phone is simultaneously connected to a Bluetooth audio device (including the PC's own Bluetooth audio profile), Android routes media to Bluetooth instead of `REMOTE_SUBMIX`. Disconnect Bluetooth media on the phone or switch media output away from Bluetooth.
-2. **Allow UDP port `19480` in Windows Defender Firewall:** Especially if your Wi-Fi network profile in Windows is set to **Public**, ensure `aethersora.exe` is allowed for Inbound UDP traffic.
-3. **Check phone media volume:** Android's `REMOTE_SUBMIX` output follows the phone's media volume level; turn up media volume on the phone.
-4. **Xiaomi HyperOS / MIUI devices:** If the Android agent reports `ERR:AUDIO_INIT_FAILED`, enable **USB debugging (Security settings)** inside **Developer options** and ensure the screen is unlocked when starting the stream.
+### Companion App produces silence when Auto-mute is enabled
+- Most newer Android ROMs apply speaker volume at the Audio HAL after `AudioPlaybackCapture`, allowing silence on the phone while streaming full audio to the PC. If your specific ROM silences capture at volume `0`, uncheck **Auto-mute phone speaker** in the app or use **ADB Wireless** mode (`REMOTE_SUBMIX`).
 
-### Audio stutters in Bluetooth fallback mode
-- Open **Device Manager -> Bluetooth -> [Your Bluetooth Adapter] -> Properties -> Power Management** and uncheck **"Allow the computer to turn off this device to save power"**.
-- Disable **USB selective suspend** in Windows **Control Panel -> Power Options -> Advanced power settings -> USB settings**.
-- Connect both PC and phone to **5 GHz Wi-Fi** to avoid 2.4 GHz radio congestion. If you use a combo Wi-Fi/Bluetooth card alongside a BLE mouse/keyboard, prefer Wi-Fi LAN mode (`--mode wifi`) to eliminate Bluetooth radio contention completely.
+### `adb pair` fails with `error: protocol fault`
+- Double-check the IP address and use the **pairing port inside the pairing popup** (not the outer Wireless Debugging port), keeping the popup open until pairing finishes.
 
-### Two-way voice calls / Discord voice on phone
-- Bluetooth A2DP Sink is a unidirectional media profile (no HFP microphone return), so Android voice apps in communication mode may route audio to the phone earpiece/speaker instead of the PC.
+### Connected in Wi-Fi ADB mode, but no sound plays on the PC
+- Disconnect Bluetooth audio on your phone so Android routes media to `REMOTE_SUBMIX` instead of Bluetooth A2DP.
+- Verify Windows Defender Firewall allows inbound UDP `19480` and turn up phone media volume.
+- On Xiaomi HyperOS / MIUI, enable **USB debugging (Security settings)** in Developer options if `AudioRecord` initialization is blocked.
 
----
-
-## Configuration File (`device_id.cfg`)
-
-AetherSora stores its local cache in `device_id.cfg` next to the executable (excluded from git via `.gitignore`):
-
-1. **Line 1:** Cached Bluetooth `DeviceId`
-2. **Line 2:** Cached Bluetooth display name
-3. **Line 3 (optional):** Last known Android Wireless Debugging IP / `IP:Port`
-
-Delete `device_id.cfg` or run with `--scan` / `--adb-host` at any time to reset it.
+### Audio stutters in Bluetooth mode
+- Disable **"Allow the computer to turn off this device to save power"** on your Bluetooth adapter in Device Manager and disable **USB selective suspend** in Windows Power Options.
+- On combo Wi-Fi/Bluetooth cards with BLE peripherals, use **Wi-Fi 5 GHz mode** (`wifi-app` or `wifi-adb`) to avoid 2.4 GHz radio contention completely.
 
 ---
 
-## Architecture Summary
+## CLI Reference & Configuration
 
-- **`src/main.rs`:** CLI parser and compile-time isolated `ActiveTransport` orchestrator (`WifiLan` vs `Bluetooth`).
-- **`src/wifi/`:** 12-byte UDP packet framing (`protocol.rs`, 5 ms / 972-byte datagrams with DSCP EF QoS and 400 ms silence keepalives), 100% safe lock-free SPSC ring buffer with Packet Loss Concealment (`ringbuf.rs`), WASAPI Event-Driven `"Pro Audio"` renderer with `IAudioClockAdjustment` drift compensation (`wasapi.rs`), and ADB Wireless discovery/lifeline manager (`adb.rs`).
-- **`android-agent/`:** Minimal Java capture agent compiled to a 5.3 KB DEX (`aether-agent.dex`) embedded directly into `aethersora.exe`.
-- **`src/bluetooth/`:** Isolated WinRT `AudioPlaybackConnection` receiver with on-demand `DeviceWatcher`.
-- **`src/signal.rs`:** Console signal handling (`SetConsoleCtrlHandler`), Windows 11 EcoQoS power-throttling opt-out, and active-stream keep-awake (`SetThreadExecutionState`).
+CLI flags attach to your terminal when invoked from PowerShell or CMD (`| Out-Host` if you want PowerShell to wait for output):
+
+```powershell
+.\AetherSora.exe                               # Start in System Tray (default)
+.\AetherSora.exe --stop                        # Cleanly stop a running tray instance
+.\AetherSora.exe --console                     # Attach and keep console output open
+.\AetherSora.exe --mode auto|wifi-app|wifi-adb|bt
+.\AetherSora.exe --pair 192.168.1.50:41235 123456
+.\AetherSora.exe --adb-host 192.168.1.50:37329
+.\AetherSora.exe --buffer-ms 20                # Wi-Fi WASAPI jitter buffer (10..80 ms)
+.\AetherSora.exe --scan                        # Interactive Bluetooth scan in console
+.\AetherSora.exe --list                        # List paired Bluetooth audio sources
+.\AetherSora.exe --device "Phone"              # Select Bluetooth device by name/ID
+.\AetherSora.exe --no-reconnect                # Disable Bluetooth auto-reconnect watcher
+.\AetherSora.exe --help
+```
+
+### Configuration (`device_id.cfg`)
+Stored locally next to `AetherSora.exe` (excluded from Git via `.gitignore`):
+1. Cached Bluetooth `DeviceId`
+2. Cached Bluetooth display name
+3. Cached Android Wireless Debugging IP / `IP:Port`
+4. Last selected transport mode (`auto` / `wifi-app` / `wifi-adb` / `bt`)
+
+---
+
+## Project Structure
+
+```text
+AetherSora/
+├── android/
+│   ├── agent/          # 5.3 KB ADB DEX agent (REMOTE_SUBMIX, embedded in AetherSora.exe)
+│   └── companion/      # 24.5 KB pure-SDK Android 10+ Companion APK (AudioPlaybackCapture)
+├── assets/             # Chrono-Star SVG logos and Windows PE icon resource
+├── src/
+│   ├── bluetooth/      # Isolated WinRT AudioPlaybackConnection receiver
+│   ├── wifi/           # UDP framing, SPSC ring buffer, WASAPI renderer, LAN discovery, mDNS watch, ADB
+│   ├── config.rs       # Local device_id.cfg persistence
+│   ├── log.rs          # In-memory 250-line ring log buffer
+│   ├── main.rs         # Native GUI entry point, CLI parser, ActiveTransport state machine
+│   ├── signal.rs       # AppSignal, single-instance guard, named --stop event, EcoQoS opt-out
+│   └── tray.rs         # Pure Win32 System Tray, Toast notifications, BT submenu, Debug Log viewer
+├── build.rs            # Embeds Windows PE icon resource
+└── Cargo.toml          # Zero third-party Rust crates beyond windows = "0.58.0"
+```
 
 ---
 
