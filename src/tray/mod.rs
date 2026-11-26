@@ -1,13 +1,16 @@
+pub mod flyout;
+
 use std::collections::VecDeque;
 use std::env;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{
-    ERROR_SUCCESS, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
+    ERROR_SUCCESS, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     CreateFontW, DeleteObject, GetStockObject, COLOR_WINDOW, DEFAULT_GUI_FONT, HBRUSH, HFONT,
@@ -24,20 +27,18 @@ use windows::Win32::UI::Shell::{
     NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetClientRect, GetCursorPos, GetMessageW, IsWindowVisible, LoadIconW,
-    MoveWindow, PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow,
-    SetWindowTextW, ShowWindow, TrackPopupMenu, TranslateMessage, CW_USEDEFAULT, HICON, HMENU,
-    ICON_BIG, ICON_SMALL, IDI_APPLICATION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
-    MF_STRING, MSG, SW_HIDE, SW_SHOW, TPM_BOTTOMALIGN, TPM_RIGHTBUTTON, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
-    WM_SETFONT, WM_SETICON, WM_SIZE, WNDCLASSW, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW,
-    WS_VISIBLE, WS_VSCROLL,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
+    IsWindowVisible, LoadIconW, MoveWindow, PostMessageW, PostQuitMessage, RegisterClassW,
+    SendMessageW, SetForegroundWindow, SetProcessDPIAware, SetWindowTextW, ShowWindow,
+    TranslateMessage, CW_USEDEFAULT, HICON, ICON_BIG, ICON_SMALL, IDI_APPLICATION, MSG, SW_HIDE,
+    SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WM_COMMAND, WM_DESTROY,
+    WM_LBUTTONUP, WM_RBUTTONUP, WM_SETFONT, WM_SETICON, WM_SIZE, WNDCLASSW, WS_CHILD,
+    WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_VISIBLE, WS_VSCROLL,
 };
 
 use crate::bluetooth::{list_paired_devices, PairedDevice};
 use crate::config::{
-    config_dir_path, load_saved_bt_device, save_bt_device, save_default_mode, TransportMode,
+    config_dir_path, save_bt_device, save_default_mode, TransportMode,
 };
 use crate::log::{self, WM_LOG_UPDATED};
 use crate::signal::AppSignal;
@@ -48,23 +49,14 @@ const LOG_WND_CLASS_NAME: PCWSTR = w!("AetherSoraDebugLogWndClass");
 const WM_TRAY_CALLBACK: u32 = WM_APP + 1;
 const WM_TRAY_UPDATE_TIP: u32 = WM_APP + 2;
 const WM_TRAY_SHOW_TOAST: u32 = WM_APP + 3;
+const WM_TRAY_REFRESH_UI: u32 = WM_APP + 4;
 pub const WM_TRAY_ALREADY_RUNNING: u32 = WM_APP + 5;
 
 const TRAY_ICON_ID: u32 = 1;
 
-const IDM_STATUS: usize = 1000;
-const IDM_MODE_AUTO: usize = 1001;
-const IDM_MODE_WIFI_APP: usize = 1002;
-const IDM_MODE_WIFI_ADB: usize = 1003;
-const IDM_MODE_BT: usize = 1004;
-const IDM_AUTOSTART: usize = 1010;
-const IDM_DEBUG_LOG: usize = 1011;
-const IDM_OPEN_CONFIG: usize = 1012;
-const IDM_BT_REFRESH: usize = 1020;
-const IDM_BT_NONE: usize = 1021;
-const IDM_EXIT: usize = 1099;
-const IDM_BT_DEVICE_BASE: usize = 2000;
-const MAX_BT_MENU_DEVICES: usize = 32;
+pub const IDM_DEBUG_LOG: usize = 1011;
+pub const IDM_TOGGLE_PAUSE: usize = 1015;
+pub const IDM_OPEN_FLYOUT: usize = 1016;
 
 const ES_MULTILINE: u32 = 0x0004;
 const ES_AUTOVSCROLL: u32 = 0x0040;
@@ -84,16 +76,18 @@ struct PendingToast {
     kind: ToastKind,
 }
 
-struct TraySharedState {
-    signal: Arc<AppSignal>,
-    status_text: Mutex<String>,
-    selected_mode: Mutex<TransportMode>,
-    hwnd_raw: Mutex<isize>,
-    hicon_raw: Mutex<isize>,
+pub(crate) struct TraySharedState {
+    pub(crate) signal: Arc<AppSignal>,
+    pub(crate) status_text: Mutex<String>,
+    pub(crate) selected_mode: Mutex<TransportMode>,
+    pub(crate) paused: AtomicBool,
+    pub(crate) hwnd_raw: Mutex<isize>,
+    pub(crate) hicon_raw: Mutex<isize>,
+    pub(crate) flyout_hwnd_raw: AtomicIsize,
+    pub(crate) last_flyout_closed: Mutex<Option<Instant>>,
     pending_toasts: Mutex<VecDeque<PendingToast>>,
-    bt_devices: Mutex<Vec<PairedDevice>>,
-    last_menu_bt_devices: Mutex<Vec<PairedDevice>>,
-    bt_scanning: AtomicBool,
+    pub(crate) bt_devices: Mutex<Vec<PairedDevice>>,
+    pub(crate) bt_scanning: AtomicBool,
     log_hwnd_raw: Mutex<isize>,
     log_edit_hwnd_raw: Mutex<isize>,
     log_font_raw: Mutex<isize>,
@@ -101,9 +95,12 @@ struct TraySharedState {
 
 static TRAY_STATE: OnceLock<Arc<TraySharedState>> = OnceLock::new();
 
-/// Pure Win32 System Tray icon backed by `Shell_NotifyIconW` (zero external crates).
-/// Supports native Windows Toast notifications (`NIF_INFO`), inline Bluetooth device
-/// selection, and a toggleable read-only Win32 Debug Log viewer.
+pub(crate) fn tray_state() -> Option<&'static Arc<TraySharedState>> {
+    TRAY_STATE.get()
+}
+
+/// Pure Win32 System Tray controller backed by `Shell_NotifyIconW` (zero external crates).
+/// Spawns the Celestial Sky flyout lazily on click with 0.00 MB idle UI overhead.
 pub struct TrayController {
     shared: Arc<TraySharedState>,
     join_handle: Option<JoinHandle<()>>,
@@ -115,11 +112,13 @@ impl TrayController {
             signal,
             status_text: Mutex::new("AetherSora: Starting...".to_owned()),
             selected_mode: Mutex::new(initial_mode),
+            paused: AtomicBool::new(false),
             hwnd_raw: Mutex::new(0),
             hicon_raw: Mutex::new(0),
+            flyout_hwnd_raw: AtomicIsize::new(0),
+            last_flyout_closed: Mutex::new(None),
             pending_toasts: Mutex::new(VecDeque::with_capacity(4)),
             bt_devices: Mutex::new(Vec::new()),
-            last_menu_bt_devices: Mutex::new(Vec::new()),
             bt_scanning: AtomicBool::new(false),
             log_hwnd_raw: Mutex::new(0),
             log_edit_hwnd_raw: Mutex::new(0),
@@ -154,6 +153,11 @@ impl TrayController {
         post_to_tray(&self.shared, WM_TRAY_UPDATE_TIP);
     }
 
+    pub fn set_paused_state(&self, paused: bool) {
+        self.shared.paused.store(paused, Ordering::Release);
+        post_to_tray(&self.shared, WM_TRAY_REFRESH_UI);
+    }
+
     pub fn show_toast(&self, title: impl Into<String>, body: impl Into<String>, kind: ToastKind) {
         enqueue_toast(&self.shared, title.into(), body.into(), kind);
     }
@@ -162,6 +166,7 @@ impl TrayController {
         if let Ok(mut list) = self.shared.bt_devices.lock() {
             *list = devices;
         }
+        post_to_tray(&self.shared, WM_TRAY_REFRESH_UI);
     }
 }
 
@@ -189,7 +194,12 @@ fn post_to_tray(shared: &Arc<TraySharedState>, msg: u32) {
     }
 }
 
-fn enqueue_toast(shared: &Arc<TraySharedState>, title: String, body: String, kind: ToastKind) {
+pub(crate) fn enqueue_toast(
+    shared: &Arc<TraySharedState>,
+    title: String,
+    body: String,
+    kind: ToastKind,
+) {
     if let Ok(mut queue) = shared.pending_toasts.lock() {
         if queue.len() >= 4 {
             queue.pop_front();
@@ -200,6 +210,8 @@ fn enqueue_toast(shared: &Arc<TraySharedState>, title: String, body: String, kin
 }
 
 unsafe fn run_tray_message_loop(shared: Arc<TraySharedState>, ready_tx: mpsc::SyncSender<()>) {
+    let _ = SetProcessDPIAware();
+
     let Ok(hmodule) = GetModuleHandleW(None) else {
         let _ = ready_tx.send(());
         return;
@@ -280,7 +292,9 @@ unsafe extern "system" fn tray_wnd_proc(
         WM_TRAY_CALLBACK => {
             let mouse_evt = (lparam.0 & 0xFFFF) as u32;
             if mouse_evt == WM_RBUTTONUP || mouse_evt == WM_LBUTTONUP {
-                show_tray_context_menu(hwnd);
+                if let Some(shared) = TRAY_STATE.get() {
+                    flyout::toggle_flyout(shared, true);
+                }
             }
             LRESULT(0)
         }
@@ -297,6 +311,13 @@ unsafe extern "system" fn tray_wnd_proc(
                     write_wide_buf(&mut nid.szTip, &status);
                     let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
                 }
+                flyout::request_repaint(shared);
+            }
+            LRESULT(0)
+        }
+        WM_TRAY_REFRESH_UI => {
+            if let Some(shared) = TRAY_STATE.get() {
+                flyout::request_repaint(shared);
             }
             LRESULT(0)
         }
@@ -327,10 +348,26 @@ unsafe extern "system" fn tray_wnd_proc(
         }
         WM_COMMAND => {
             let cmd_id = wparam.0 & 0xFFFF;
-            handle_menu_command(cmd_id);
+            match cmd_id {
+                IDM_DEBUG_LOG => toggle_debug_log_window(),
+                IDM_TOGGLE_PAUSE => {
+                    if let Some(shared) = TRAY_STATE.get() {
+                        toggle_pause(shared);
+                    }
+                }
+                IDM_OPEN_FLYOUT => {
+                    if let Some(shared) = TRAY_STATE.get() {
+                        flyout::open_flyout_anchored(shared);
+                    }
+                }
+                _ => {}
+            }
             LRESULT(0)
         }
         WM_CLOSE => {
+            if let Some(shared) = TRAY_STATE.get() {
+                flyout::destroy_if_open(shared);
+            }
             destroy_debug_log_window();
             let _ = DestroyWindow(hwnd);
             LRESULT(0)
@@ -376,253 +413,79 @@ unsafe fn display_tray_toast(
     let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
-unsafe fn show_tray_context_menu(hwnd: HWND) {
-    let Ok(hmenu) = CreatePopupMenu() else {
-        return;
-    };
-
-    let (status_label, current_mode, cached_bt) = TRAY_STATE
-        .get()
-        .map(|s| {
-            let st = s
-                .status_text
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_else(|_| "AetherSora".to_owned());
-            let md = s
-                .selected_mode
-                .lock()
-                .map(|g| *g)
-                .unwrap_or(TransportMode::Auto);
-            let devs = s
-                .bt_devices
-                .lock()
-                .map(|g| g.clone())
-                .unwrap_or_default();
-            (st, md, devs)
-        })
-        .unwrap_or_else(|| ("AetherSora".to_owned(), TransportMode::Auto, Vec::new()));
-
-    let status_wide = to_wide(&status_label);
-    let _ = AppendMenuW(
-        hmenu,
-        MF_STRING | MF_GRAYED,
-        IDM_STATUS,
-        PCWSTR(status_wide.as_ptr()),
-    );
-    let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-
-    append_radio_item(
-        hmenu,
-        IDM_MODE_AUTO,
-        "Auto (Wi-Fi -> Bluetooth)",
-        current_mode == TransportMode::Auto,
-    );
-    append_radio_item(
-        hmenu,
-        IDM_MODE_WIFI_APP,
-        "Wi-Fi 5GHz (Companion App - No Dev Mode)",
-        current_mode == TransportMode::WifiApp,
-    );
-    append_radio_item(
-        hmenu,
-        IDM_MODE_WIFI_ADB,
-        "Wi-Fi 5GHz (ADB Wireless - Zero APK)",
-        current_mode == TransportMode::WifiAdb,
-    );
-    append_radio_item(
-        hmenu,
-        IDM_MODE_BT,
-        "Bluetooth A2DP Sink (Android & iOS)",
-        current_mode == TransportMode::Bluetooth,
-    );
-
-    let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-
-    if let Ok(bt_sub) = CreatePopupMenu() {
-        let saved_bt = load_saved_bt_device();
-        let saved_id = saved_bt.as_ref().map(|(id, _)| id.as_str());
-
-        let menu_devices: Vec<PairedDevice> = if !cached_bt.is_empty() {
-            cached_bt.into_iter().take(MAX_BT_MENU_DEVICES).collect()
-        } else if let Some((id, name)) = saved_bt.clone() {
-            vec![PairedDevice {
-                id,
-                name,
-                is_enabled: true,
-            }]
-        } else {
-            Vec::new()
-        };
-
-        if let Some(shared) = TRAY_STATE.get() {
-            if let Ok(mut snap) = shared.last_menu_bt_devices.lock() {
-                *snap = menu_devices.clone();
-            }
-        }
-
-        if menu_devices.is_empty() {
-            let _ = AppendMenuW(
-                bt_sub,
-                MF_STRING | MF_GRAYED,
-                IDM_BT_NONE,
-                w!("(No saved device - click Scan below)"),
-            );
-        } else {
-            for (idx, dev) in menu_devices.iter().enumerate() {
-                let is_selected = saved_id
-                    .map(|sid| sid.eq_ignore_ascii_case(&dev.id))
-                    .unwrap_or(false);
-                let label = if dev.is_enabled {
-                    dev.name.clone()
-                } else {
-                    format!("{} (disabled)", dev.name)
-                };
-                append_radio_item(bt_sub, IDM_BT_DEVICE_BASE + idx, &label, is_selected);
-            }
-        }
-
-        let _ = AppendMenuW(bt_sub, MF_SEPARATOR, 0, PCWSTR::null());
-        let is_scanning = TRAY_STATE
-            .get()
-            .map(|s| s.bt_scanning.load(Ordering::Acquire))
-            .unwrap_or(false);
-        let refresh_flags = if is_scanning {
-            MF_STRING | MF_GRAYED
-        } else {
-            MF_STRING
-        };
-        let refresh_label = if is_scanning {
-            w!("Scanning Paired Devices...")
-        } else {
-            w!("Scan / Refresh Paired Devices")
-        };
-        let _ = AppendMenuW(bt_sub, refresh_flags, IDM_BT_REFRESH, refresh_label);
-
-        let _ = AppendMenuW(
-            hmenu,
-            MF_POPUP,
-            bt_sub.0 as usize,
-            w!("Bluetooth Device"),
-        );
-    }
-
-    let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-
-    let autostart_flags = if is_autostart_enabled() {
-        MF_STRING | MF_CHECKED
-    } else {
-        MF_STRING
-    };
-    let _ = AppendMenuW(hmenu, autostart_flags, IDM_AUTOSTART, w!("Start with Windows"));
-
-    let log_flags = if is_debug_log_visible() {
-        MF_STRING | MF_CHECKED
-    } else {
-        MF_STRING
-    };
-    let _ = AppendMenuW(hmenu, log_flags, IDM_DEBUG_LOG, w!("Show Debug Log"));
-    let _ = AppendMenuW(hmenu, MF_STRING, IDM_OPEN_CONFIG, w!("Open Config Folder"));
-    let _ = AppendMenuW(hmenu, MF_SEPARATOR, 0, PCWSTR::null());
-    let _ = AppendMenuW(hmenu, MF_STRING, IDM_EXIT, w!("Exit AetherSora"));
-
-    let mut pt = POINT::default();
-    let _ = GetCursorPos(&mut pt);
-    let _ = SetForegroundWindow(hwnd);
-    let _ = TrackPopupMenu(
-        hmenu,
-        TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
-        pt.x,
-        pt.y,
-        0,
-        hwnd,
-        None,
-    );
-    let _ = PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
-    let _ = DestroyMenu(hmenu);
-}
-
-unsafe fn append_radio_item(hmenu: HMENU, id: usize, label: &str, checked: bool) {
-    let flags = if checked {
-        MF_STRING | MF_CHECKED
-    } else {
-        MF_STRING
-    };
-    let wide = to_wide(label);
-    let _ = AppendMenuW(hmenu, flags, id, PCWSTR(wide.as_ptr()));
-}
-
-fn handle_menu_command(cmd_id: usize) {
-    let Some(shared) = TRAY_STATE.get() else {
-        return;
-    };
-
-    if (IDM_BT_DEVICE_BASE..IDM_BT_DEVICE_BASE + MAX_BT_MENU_DEVICES).contains(&cmd_id) {
-        let idx = cmd_id - IDM_BT_DEVICE_BASE;
-        let chosen = shared
-            .last_menu_bt_devices
-            .lock()
-            .ok()
-            .and_then(|list| list.get(idx).cloned());
-        if let Some(dev) = chosen {
-            if let Err(err) = save_bt_device(&dev.id, &dev.name) {
-                log::error(format!("[Tray] Failed to save Bluetooth device: {err}"));
-                enqueue_toast(
-                    shared,
-                    "Bluetooth Config Error".to_owned(),
-                    format!("Could not save device_id.cfg: {err}"),
-                    ToastKind::Warning,
-                );
-                return;
-            }
-            log::info(format!(
-                "[Tray] Selected Bluetooth device '{}' -> switching to Bluetooth A2DP Sink.",
-                dev.name
-            ));
-            enqueue_toast(
-                shared,
-                "Bluetooth Device Selected".to_owned(),
-                format!("Connecting to {}...", dev.name),
-                ToastKind::Info,
-            );
-            trigger_mode_switch(shared, TransportMode::Bluetooth);
-        }
-        return;
-    }
-
-    match cmd_id {
-        IDM_MODE_AUTO => trigger_mode_switch(shared, TransportMode::Auto),
-        IDM_MODE_WIFI_APP => trigger_mode_switch(shared, TransportMode::WifiApp),
-        IDM_MODE_WIFI_ADB => trigger_mode_switch(shared, TransportMode::WifiAdb),
-        IDM_MODE_BT => trigger_mode_switch(shared, TransportMode::Bluetooth),
-        IDM_BT_REFRESH => spawn_bt_device_scan(shared),
-        IDM_AUTOSTART => {
-            let currently_enabled = is_autostart_enabled();
-            let _ = set_autostart_enabled(!currently_enabled);
-        }
-        IDM_DEBUG_LOG => unsafe {
-            toggle_debug_log_window();
-        },
-        IDM_OPEN_CONFIG => {
-            let dir = config_dir_path();
-            let _ = Command::new("explorer.exe").arg(dir).spawn();
-        }
-        IDM_EXIT => {
-            shared.signal.request_exit();
-        }
-        _ => {}
+pub(crate) fn mode_display_name(mode: TransportMode) -> &'static str {
+    match mode {
+        TransportMode::Auto => "Auto (Wi-Fi -> Bluetooth)",
+        TransportMode::WifiApp => "Wi-Fi 5GHz (Companion App)",
+        TransportMode::WifiAdb => "Wi-Fi 5GHz (ADB Wireless)",
+        TransportMode::Bluetooth => "Bluetooth A2DP (Android & iOS)",
     }
 }
 
-fn trigger_mode_switch(shared: &Arc<TraySharedState>, mode: TransportMode) {
+pub(crate) fn trigger_mode_switch(shared: &Arc<TraySharedState>, mode: TransportMode) {
     if let Ok(mut m) = shared.selected_mode.lock() {
         *m = mode;
     }
     let _ = save_default_mode(mode);
-    shared.signal.request_mode_switch(mode);
+    if shared.paused.load(Ordering::Acquire) {
+        if let Ok(mut s) = shared.status_text.lock() {
+            *s = format!("Paused — Ready ({})", mode.as_str());
+        }
+        shared.signal.request_mode_switch(mode);
+        flyout::request_repaint(shared);
+    } else {
+        shared.signal.request_mode_switch(mode);
+    }
 }
 
-fn spawn_bt_device_scan(shared: &Arc<TraySharedState>) {
+pub(crate) fn toggle_pause(shared: &Arc<TraySharedState>) {
+    let new_paused = !shared.signal.is_paused();
+    shared.paused.store(new_paused, Ordering::Release);
+    if let Ok(mut s) = shared.status_text.lock() {
+        *s = if new_paused {
+            "Pausing receiver...".to_owned()
+        } else {
+            "Resuming receiver...".to_owned()
+        };
+    }
+    shared.signal.set_paused(new_paused);
+    flyout::request_repaint(shared);
+}
+
+pub(crate) fn select_bt_device(shared: &Arc<TraySharedState>, dev: &PairedDevice) {
+    if let Err(err) = save_bt_device(&dev.id, &dev.name) {
+        log::error(format!("[Tray] Failed to save Bluetooth device: {err}"));
+        enqueue_toast(
+            shared,
+            "Bluetooth Config Error".to_owned(),
+            format!("Could not save device_id.cfg: {err}"),
+            ToastKind::Warning,
+        );
+        return;
+    }
+
+    log::info(format!(
+        "[Tray] Selected Bluetooth device '{}' -> connecting Bluetooth A2DP Sink.",
+        dev.name
+    ));
+    enqueue_toast(
+        shared,
+        "Bluetooth Device Selected".to_owned(),
+        format!("Connecting to {}...", dev.name),
+        ToastKind::Info,
+    );
+
+    if let Ok(mut m) = shared.selected_mode.lock() {
+        *m = TransportMode::Bluetooth;
+    }
+    let _ = save_default_mode(TransportMode::Bluetooth);
+    shared.paused.store(false, Ordering::Release);
+    shared.signal.request_mode_switch(TransportMode::Bluetooth);
+    shared.signal.set_paused(false);
+    flyout::request_repaint(shared);
+}
+
+pub(crate) fn spawn_bt_device_scan(shared: &Arc<TraySharedState>) {
     if shared
         .bt_scanning
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -630,6 +493,7 @@ fn spawn_bt_device_scan(shared: &Arc<TraySharedState>) {
     {
         return;
     }
+    flyout::request_repaint(shared);
 
     let shared_clone = Arc::clone(shared);
     let _ = thread::Builder::new()
@@ -657,9 +521,7 @@ fn spawn_bt_device_scan(shared: &Arc<TraySharedState>) {
                         enqueue_toast(
                             &shared_clone,
                             "Bluetooth Scan Complete".to_owned(),
-                            format!(
-                                "Found {count} paired device(s). Right-click Tray -> Bluetooth Device to choose."
-                            ),
+                            format!("Found {count} paired device(s). Pick your phone from the dropdown."),
                             ToastKind::Info,
                         );
                     }
@@ -675,10 +537,16 @@ fn spawn_bt_device_scan(shared: &Arc<TraySharedState>) {
                 }
             }
             shared_clone.bt_scanning.store(false, Ordering::Release);
+            post_to_tray(&shared_clone, WM_TRAY_REFRESH_UI);
         });
 }
 
-unsafe fn is_debug_log_visible() -> bool {
+pub(crate) fn open_config_folder() {
+    let dir = config_dir_path();
+    let _ = Command::new("explorer.exe").arg(dir).spawn();
+}
+
+pub(crate) unsafe fn is_debug_log_visible() -> bool {
     let Some(shared) = TRAY_STATE.get() else {
         return false;
     };
@@ -689,7 +557,7 @@ unsafe fn is_debug_log_visible() -> bool {
     IsWindowVisible(HWND(raw as *mut core::ffi::c_void)).as_bool()
 }
 
-unsafe fn toggle_debug_log_window() {
+pub(crate) unsafe fn toggle_debug_log_window() {
     let Some(shared) = TRAY_STATE.get() else {
         return;
     };
@@ -893,7 +761,7 @@ unsafe extern "system" fn debug_log_wnd_proc(
     }
 }
 
-fn is_autostart_enabled() -> bool {
+pub(crate) fn is_autostart_enabled() -> bool {
     unsafe {
         let mut hkey = HKEY::default();
         let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -908,7 +776,7 @@ fn is_autostart_enabled() -> bool {
     }
 }
 
-fn set_autostart_enabled(enable: bool) -> bool {
+pub(crate) fn set_autostart_enabled(enable: bool) -> bool {
     unsafe {
         let mut hkey = HKEY::default();
         let subkey = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -935,11 +803,11 @@ fn set_autostart_enabled(enable: bool) -> bool {
     }
 }
 
-fn to_wide(s: &str) -> Vec<u16> {
+pub(crate) fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-fn write_wide_buf<const N: usize>(dst: &mut [u16; N], text: &str) {
+pub(crate) fn write_wide_buf<const N: usize>(dst: &mut [u16; N], text: &str) {
     dst.fill(0);
     for (i, ch) in text.encode_utf16().take(N.saturating_sub(1)).enumerate() {
         dst[i] = ch;

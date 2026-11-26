@@ -36,6 +36,8 @@ pub enum AutoUpgradeTarget {
 #[derive(Default)]
 struct SignalState {
     exit_requested: bool,
+    paused: bool,
+    pause_changed: bool,
     mode_switch: Option<TransportMode>,
     auto_upgrade: Option<AutoUpgradeTarget>,
     reconnect_requested: bool,
@@ -45,6 +47,7 @@ struct SignalState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WakeEvent {
     Exit,
+    PauseChanged(bool),
     SwitchMode(TransportMode),
     AutoUpgrade(AutoUpgradeTarget),
     Reconnect,
@@ -69,6 +72,34 @@ impl AppSignal {
             guard.exit_requested = true;
             self.cv.notify_all();
         }
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        if let Ok(mut guard) = self.state.lock() {
+            if guard.paused != paused {
+                guard.paused = paused;
+                guard.pause_changed = true;
+                self.cv.notify_all();
+            }
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.state
+            .lock()
+            .map(|guard| guard.paused)
+            .unwrap_or(false)
+    }
+
+    pub fn take_pause_changed(&self) -> Option<bool> {
+        self.state.lock().ok().and_then(|mut guard| {
+            if guard.pause_changed {
+                guard.pause_changed = false;
+                Some(guard.paused)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn request_mode_switch(&self, mode: TransportMode) {
@@ -128,6 +159,7 @@ impl AppSignal {
         };
 
         while !guard.exit_requested
+            && !guard.pause_changed
             && guard.mode_switch.is_none()
             && guard.auto_upgrade.is_none()
             && !guard.reconnect_requested
@@ -141,6 +173,10 @@ impl AppSignal {
 
         if guard.exit_requested {
             return WakeEvent::Exit;
+        }
+        if guard.pause_changed {
+            guard.pause_changed = false;
+            return WakeEvent::PauseChanged(guard.paused);
         }
         if let Some(mode) = guard.mode_switch {
             return WakeEvent::SwitchMode(mode);
@@ -157,8 +193,8 @@ impl AppSignal {
         WakeEvent::Reconnect
     }
 
-    /// Waits for `duration` unless exit, mode switch, or auto-upgrade is requested earlier.
-    /// Returns `true` if exiting, switching modes, or auto-upgrading.
+    /// Waits for `duration` unless exit, pause state change, mode switch, or auto-upgrade is requested earlier.
+    /// Returns `true` if exiting, toggling pause, switching modes, or auto-upgrading.
     pub fn sleep_interruptible(&self, duration: Duration) -> bool {
         let mut guard = match self.state.lock() {
             Ok(g) => g,
@@ -166,7 +202,11 @@ impl AppSignal {
         };
         let deadline = Instant::now() + duration;
 
-        while !guard.exit_requested && guard.mode_switch.is_none() && guard.auto_upgrade.is_none() {
+        while !guard.exit_requested
+            && !guard.pause_changed
+            && guard.mode_switch.is_none()
+            && guard.auto_upgrade.is_none()
+        {
             let now = Instant::now();
             if now >= deadline {
                 break;
@@ -181,7 +221,10 @@ impl AppSignal {
             }
         }
 
-        guard.exit_requested || guard.mode_switch.is_some() || guard.auto_upgrade.is_some()
+        guard.exit_requested
+            || guard.pause_changed
+            || guard.mode_switch.is_some()
+            || guard.auto_upgrade.is_some()
     }
 }
 
@@ -328,5 +371,25 @@ pub fn send_stop_signal() -> std::result::Result<(), String> {
         let res = SetEvent(evt).map_err(|e| format!("Failed to signal AetherSora stop event: {e}"));
         let _ = CloseHandle(evt);
         res
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pause_and_resume_wake_condvar_cleanly() {
+        let signal = AppSignal::new();
+        assert!(!signal.is_paused());
+
+        signal.set_paused(true);
+        assert!(signal.is_paused());
+        assert_eq!(signal.wait_for_event(), WakeEvent::PauseChanged(true));
+        assert!(signal.take_pause_changed().is_none());
+
+        signal.set_paused(false);
+        assert!(!signal.is_paused());
+        assert_eq!(signal.wait_for_event(), WakeEvent::PauseChanged(false));
     }
 }

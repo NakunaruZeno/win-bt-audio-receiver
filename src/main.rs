@@ -21,7 +21,7 @@ use crate::config::{load_config, TransportMode};
 use crate::signal::{
     attach_parent_console, disable_power_throttling, ensure_console_for_cli, install_ctrl_handler,
     notify_existing_tray_instance, send_stop_signal, spawn_stop_event_listener, AppSignal,
-    AutoUpgradeTarget, SingleInstanceGuard,
+    AutoUpgradeTarget, SingleInstanceGuard, WakeEvent,
 };
 use crate::tray::{ToastKind, TrayController};
 use crate::wifi::adb::pair_wireless_adb;
@@ -60,7 +60,7 @@ enum CommandAction {
 
 fn print_help() {
     log::info(
-        "AetherSora v0.3 - Universal Windows System Tray Audio Receiver\n\
+        "AetherSora v0.3.1 - Universal Windows System Tray Audio Receiver\n\
          \n\
          USAGE:\n\
          \tAetherSora                                    Run silently in Windows System Tray (default)\n\
@@ -288,7 +288,7 @@ fn run_orchestrator(
     };
 
     log::info(format!(
-        "[Startup] AetherSora v0.3 started (mode: {}, tray: {use_tray}).",
+        "[Startup] AetherSora v0.3.1 started (mode: {}, tray: {use_tray}).",
         initial_mode.as_str()
     ));
 
@@ -302,6 +302,51 @@ fn run_orchestrator(
     while !signal.is_exit_requested() {
         let _ = signal.take_mode_switch();
         let _ = signal.take_auto_upgrade();
+        let _ = signal.take_pause_changed();
+
+        if signal.is_paused() {
+            if let Some(t) = &tray {
+                t.set_paused_state(true);
+            }
+            update_tray(
+                &tray,
+                current_mode,
+                format!("Paused — Ready ({})", current_mode.as_str()),
+            );
+            if announce_state {
+                toast_tray(
+                    &tray,
+                    "AetherSora Paused",
+                    "Audio & wireless listeners stopped (0% CPU). Click Resume anytime.",
+                    ToastKind::Info,
+                );
+                announce_state = false;
+            }
+
+            match signal.wait_for_event() {
+                WakeEvent::Exit => break,
+                WakeEvent::SwitchMode(next_mode) => {
+                    let _ = signal.take_mode_switch();
+                    current_mode = next_mode;
+                    announce_state = !signal.is_paused();
+                }
+                WakeEvent::PauseChanged(_) => {
+                    if let Some(next_mode) = signal.take_mode_switch() {
+                        current_mode = next_mode;
+                    }
+                    if let Some(t) = &tray {
+                        t.set_paused_state(signal.is_paused());
+                    }
+                    announce_state = true;
+                }
+                WakeEvent::AutoUpgrade(_) | WakeEvent::Reconnect | WakeEvent::StateSync => {}
+            }
+            continue;
+        }
+
+        if let Some(t) = &tray {
+            t.set_paused_state(false);
+        }
 
         let mut auto_watcher: Option<AutoUpgradeWatcher> = None;
 
@@ -698,7 +743,16 @@ fn run_orchestrator(
                 if tray.is_none() {
                     return Ok(1);
                 }
-                let _ = signal.wait_for_event();
+                if let WakeEvent::PauseChanged(paused_now) = signal.wait_for_event() {
+                    drop(auto_watcher.take());
+                    announce_state = true;
+                    log::info(if paused_now {
+                        "[Pause] Receiver paused (0% CPU standby)."
+                    } else {
+                        "[Resume] Resuming audio receiver..."
+                    });
+                    continue;
+                }
             }
         }
 
@@ -709,6 +763,18 @@ fn run_orchestrator(
 
         if signal.is_exit_requested() {
             break;
+        }
+
+        if let Some(paused_now) = signal.take_pause_changed() {
+            if paused_now {
+                log::info("[Pause] Dropped active transport. Entering 0% CPU paused standby...");
+            } else {
+                log::info("[Resume] Resuming selected audio receiver mode...");
+            }
+            pending_auto_upgrade = None;
+            skip_next_adb_probe = false;
+            announce_state = true;
+            continue;
         }
 
         if let Some(next_mode) = signal.take_mode_switch() {

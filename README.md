@@ -80,12 +80,11 @@ Pick the connection path that fits your device:
 
 ## System Tray Controls & Transport Modes
 
-**Click or right-click** the Chrono-Star icon in the System Tray to:
-- **Hot-switch modes:** `Auto`, `Wi-Fi 5GHz (Companion App)`, `Wi-Fi 5GHz (ADB Wireless)`, or `Bluetooth A2DP Sink`.
-- **Bluetooth Device:** Select any paired phone directly or run **Scan / Refresh Paired Devices**.
-- **Start with Windows:** Toggle auto-launch at sign-in (`HKCU\...\Run\AetherSora`).
-- **Show Debug Log:** Open a native Win32 read-only live log viewer (closing the window only hides it without stopping AetherSora).
-- **Open Config Folder** / **Exit AetherSora**.
+**Click or right-click** the Chrono-Star icon in the System Tray to open the Celestial Sky quick-control flyout (rendered natively with Win32 GDI + DWM and destroyed immediately when dismissed for **0 MB idle overhead**):
+- **Pause / Resume Receiver:** Instantly stops active audio/wireless listeners (`0% CPU`, releases WASAPI, UDP, ADB, and Bluetooth handles) without exiting the tray.
+- **Connection Mode Dropdown:** Hot-switch between `Auto`, `Wi-Fi 5GHz (Companion App)`, `Wi-Fi 5GHz (ADB Wireless)`, and `Bluetooth A2DP (Android & iOS)`.
+- **Bluetooth Device Dropdown & Scan BT:** Pick any paired phone or scan for paired devices directly from the tray.
+- **Start with Windows** (`HKCU\...\Run\AetherSora`), **Show Live Debug Log**, **Open Config**, and **Exit AetherSora**.
 
 ### Mode Comparison
 
@@ -166,7 +165,7 @@ AetherSora/
 │   ├── log.rs          # In-memory 250-line ring log buffer
 │   ├── main.rs         # Native GUI entry point, CLI parser, ActiveTransport state machine
 │   ├── signal.rs       # AppSignal, single-instance guard, named --stop event, EcoQoS opt-out
-│   └── tray.rs         # Pure Win32 System Tray, Toast notifications, BT submenu, Debug Log viewer
+│   └── tray/           # Pure Win32 System Tray, lazy Celestial Sky flyout, Toast & Debug Log viewer
 ├── build.rs            # Embeds Windows PE icon resource
 └── Cargo.toml          # Zero third-party Rust crates beyond windows = "0.58.0"
 ```

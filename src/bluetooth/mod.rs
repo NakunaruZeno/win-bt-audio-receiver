@@ -385,7 +385,10 @@ impl BtSession {
 
         loop {
             match self.signal.wait_for_event() {
-                WakeEvent::Exit | WakeEvent::SwitchMode(_) | WakeEvent::AutoUpgrade(_) => break,
+                WakeEvent::Exit
+                | WakeEvent::SwitchMode(_)
+                | WakeEvent::AutoUpgrade(_)
+                | WakeEvent::PauseChanged(_) => break,
                 WakeEvent::StateSync => {
                     let now_connected = is_stream_opened(&self.active_conn);
                     sync_watcher_and_power(
