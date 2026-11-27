@@ -4,11 +4,14 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $buildDir = Join-Path $scriptDir "build"
 $apkOut = Join-Path $scriptDir "AetherSora-Companion.apk"
 
-# Locate JDK tools (PATH, JAVA_HOME, or Android Studio JBR)
-$javac = (Get-Command javac -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
-if (-not $javac -and -not [string]::IsNullOrWhiteSpace($env:JAVA_HOME)) {
+# Locate JDK tools (JAVA_HOME, PATH, or Android Studio JBR)
+$javac = $null
+if (-not [string]::IsNullOrWhiteSpace($env:JAVA_HOME)) {
     $javaHomeJavac = Join-Path $env:JAVA_HOME "bin\javac.exe"
     if (Test-Path $javaHomeJavac) { $javac = $javaHomeJavac }
+}
+if (-not $javac) {
+    $javac = (Get-Command javac -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
 }
 if (-not $javac) {
     $jbrJavac = "C:\Program Files\Android\Android Studio\jbr\bin\javac.exe"
@@ -17,6 +20,10 @@ if (-not $javac) {
 if (-not $javac) { throw "javac.exe not found." }
 $javaBinDir = Split-Path -Parent $javac
 $keytool = Join-Path $javaBinDir "keytool.exe"
+if (-not (Test-Path $keytool)) {
+    $keytool = (Get-Command keytool -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+}
+if (-not $keytool -or -not (Test-Path $keytool)) { throw "keytool.exe not found." }
 $env:PATH = "$javaBinDir;$env:PATH"
 
 # Locate Android SDK tools
@@ -97,7 +104,7 @@ if ($LASTEXITCODE -ne 0) { throw "zipalign failed" }
 Write-Host "[6/6] Signing APK with local debug keystore..."
 $keystore = Join-Path $scriptDir "debug.keystore"
 if (-not (Test-Path $keystore)) {
-    & $keytool -genkeypair -v -keystore $keystore -storepass android -alias aethersora -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AetherSora,O=AetherSora,C=VN"
+    & $keytool -genkeypair -keystore $keystore -storepass android -alias aethersora -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AetherSora,O=AetherSora,C=VN"
     if ($LASTEXITCODE -ne 0) { throw "keytool failed" }
 }
 

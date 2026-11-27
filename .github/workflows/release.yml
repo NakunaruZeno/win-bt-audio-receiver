@@ -22,11 +22,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Test and build Windows receiver
+      - name: Run Windows unit tests
         shell: powershell
         run: |
           cargo test --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Windows release binary
+        shell: powershell
+        run: |
           cargo build --release --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
