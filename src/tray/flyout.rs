@@ -1027,7 +1027,7 @@ unsafe fn paint_header(
         hdc,
         ui.font_label,
         &layout.version_rect,
-        "v0.3.1",
+        "v0.4.0",
         ACCENT_SKY,
         DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
     );

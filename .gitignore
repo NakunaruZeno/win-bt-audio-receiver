@@ -6,6 +6,7 @@
 # Android build intermediates & local signing keys
 android/agent/out/
 android/companion/build/
+*.apk
 **/*.idsig
 **/*.keystore
 **/*.jks
@@ -18,17 +19,14 @@ ios/companion/Payload/
 DerivedData/
 xcuserdata/
 
-# Impeccable runtime & mock directories
-.impeccable/questions/
-.impeccable/mocks/
-.impeccable/review/
-
 # Local configuration & private device identifiers
 device_id.cfg
 **/*.cfg
 
 # Local notes & environment files
 Plans.md
+DESIGN.md
+PRODUCT.md
 .env
 .env.*
 

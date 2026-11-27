@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -55,7 +55,7 @@ jobs:
           rm -rf Payload
 
       - name: Upload unsigned IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AetherSora-Companion-iOS-unsigned
           path: AetherSora-Companion-iOS-unsigned.ipa

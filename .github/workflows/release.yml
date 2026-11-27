@@ -1,0 +1,254 @@
+name: Release AetherSora
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.4.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-and-android:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Test and build Windows receiver
+        shell: powershell
+        run: |
+          cargo test --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Android Companion APK and stage release assets
+        shell: powershell
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if (-not [string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_BASE64)) {
+            $bytes = [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64.Trim())
+            [System.IO.File]::WriteAllBytes("android\companion\debug.keystore", $bytes)
+          }
+
+          powershell -ExecutionPolicy Bypass -File .\android\companion\build.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          New-Item -ItemType Directory -Force -Path "release-assets" | Out-Null
+          $exePath = "target\release\AetherSora.exe"
+          $apkPath = "android\companion\AetherSora-Companion.apk"
+          if (-not (Test-Path $exePath)) { throw "Missing built Windows binary: $exePath" }
+          if (-not (Test-Path $apkPath)) { throw "Missing built Android APK: $apkPath" }
+
+          Copy-Item $exePath "release-assets\AetherSora.exe" -Force
+          Copy-Item $apkPath "release-assets\AetherSora-Companion.apk" -Force
+
+      - name: Upload Windows and Android release assets
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-and-android-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+  build-ios:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios/companion
+        run: xcodegen generate
+
+      - name: Build unsigned iOS app bundle
+        working-directory: ios/companion
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project AetherSoraCompanion.xcodeproj \
+            -scheme AetherSoraCompanion \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        working-directory: ios/companion
+        run: |
+          APP_PATH="build/Build/Products/Release-iphoneos/AetherSoraCompanion.app"
+          test -d "$APP_PATH"
+          test -d "$APP_PATH/PlugIns/BroadcastUpload.appex"
+          plutil -lint "$APP_PATH/Info.plist"
+          plutil -lint "$APP_PATH/PlugIns/BroadcastUpload.appex/Info.plist"
+          plutil -p "$APP_PATH/PlugIns/BroadcastUpload.appex/Info.plist" | grep -q "RPBroadcastProcessModeSampleBuffer"
+          rm -rf Payload AetherSora-Companion-iOS-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry ../../AetherSora-Companion-iOS-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-assets
+          path: AetherSora-Companion-iOS-unsigned.ipa
+          if-no-files-found: error
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: [build-windows-and-android, build-ios]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve release tag
+        id: meta
+        run: |
+          TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          if [ -z "$TAG_NAME" ]; then
+            echo "Resolved empty release tag" >&2
+            exit 1
+          fi
+          echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release assets and generate SHA256SUMS + AltStore source
+        env:
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          ls -la dist
+          for f in AetherSora.exe AetherSora-Companion.apk AetherSora-Companion-iOS-unsigned.ipa; do
+            test -s "dist/$f" || { echo "Missing or empty dist/$f" >&2; exit 1; }
+          done
+
+          (cd dist && sha256sum AetherSora.exe AetherSora-Companion.apk AetherSora-Companion-iOS-unsigned.ipa > SHA256SUMS.txt)
+
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import plistlib
+          import zipfile
+
+          tag = os.environ["RELEASE_TAG"]
+          repo = os.environ["REPO_SLUG"]
+          ipa_path = pathlib.Path("dist/AetherSora-Companion-iOS-unsigned.ipa")
+          ipa_bytes = ipa_path.read_bytes()
+          ipa_size = len(ipa_bytes)
+          ipa_sha256 = hashlib.sha256(ipa_bytes).hexdigest()
+
+          with zipfile.ZipFile(ipa_path, "r") as zf:
+              with zf.open("Payload/AetherSoraCompanion.app/Info.plist") as pf:
+                  plist = plistlib.load(pf)
+
+          bundle_id = str(plist.get("CFBundleIdentifier", "com.aethersora.companion"))
+          version = str(plist.get("CFBundleShortVersionString", tag.lstrip("v")))
+          build_version = str(plist.get("CFBundleVersion", "1"))
+          min_os = str(plist.get("MinimumOSVersion", "15.0"))
+          local_net_desc = str(
+              plist.get(
+                  "NSLocalNetworkUsageDescription",
+                  "AetherSora scans your local Wi-Fi network to find your Windows PC and streams 48 kHz lossless PCM audio.",
+              )
+          )
+          release_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+          icon_url = f"https://raw.githubusercontent.com/{repo}/main/ios/companion/App/Assets.xcassets/AppIcon.appiconset/AppIcon.png"
+
+          source = {
+              "name": "AetherSora",
+              "identifier": "com.aethersora.source",
+              "subtitle": "Official AetherSora Companion source for AltStore & SideStore",
+              "description": "Lossless 48 kHz Wi-Fi audio companion for AetherSora Windows Receiver.",
+              "iconURL": icon_url,
+              "sourceURL": f"https://github.com/{repo}/releases/latest/download/altstore-source.json",
+              "tintColor": "#38BDF8",
+              "apps": [
+                  {
+                      "name": "AetherSora",
+                      "bundleIdentifier": bundle_id,
+                      "developerName": repo.split("/")[0],
+                      "subtitle": "48 kHz Lossless Wi-Fi Audio Companion",
+                      "localizedDescription": "Stream system audio from iPhone or iPad to your Windows PC over 5 GHz Wi-Fi (48 kHz 16-bit Stereo PCM) via ReplayKit Broadcast Upload Extension.",
+                      "iconURL": icon_url,
+                      "tintColor": "#38BDF8",
+                      "category": "utilities",
+                      "appPermissions": {
+                          "entitlements": [
+                              "com.apple.security.application-groups",
+                          ],
+                          "privacy": {
+                              "NSLocalNetworkUsageDescription": local_net_desc,
+                          },
+                      },
+                      "versions": [
+                          {
+                              "version": version,
+                              "buildVersion": build_version,
+                              "date": release_date,
+                              "localizedDescription": f"AetherSora {tag} — Celestial Sky Minimalist UI + ReplayKit 48 kHz Lossless Wi-Fi audio streaming.",
+                              "downloadURL": f"https://github.com/{repo}/releases/download/{tag}/AetherSora-Companion-iOS-unsigned.ipa",
+                              "size": ipa_size,
+                              "sha256": ipa_sha256,
+                              "minOSVersion": min_os,
+                          }
+                      ],
+                  }
+              ],
+              "news": [],
+          }
+
+          pathlib.Path("dist/altstore-source.json").write_text(
+              json.dumps(source, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: AetherSora ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Downloads
+
+            | Platform | File | Notes |
+            | :--- | :--- | :--- |
+            | **Windows 10/11 (x64)** | `AetherSora.exe` | Standalone System Tray receiver (~438 KB) |
+            | **Android 10+** | `AetherSora-Companion.apk` | Pure-SDK Wi-Fi 5 GHz Companion App (~55 KB) |
+            | **iOS / iPadOS 15+** | `AetherSora-Companion-iOS-unsigned.ipa` | ReplayKit Broadcast IPA (sideload via AltStore / SideStore / Sideloadly / TrollStore) |
+            | **AltStore / SideStore Source** | `altstore-source.json` | Add `releases/latest/download/altstore-source.json` in AltStore / SideStore |
+            | **Checksums** | `SHA256SUMS.txt` | SHA-256 verification hashes |
+          files: |
+            dist/AetherSora.exe
+            dist/AetherSora-Companion.apk
+            dist/AetherSora-Companion-iOS-unsigned.ipa
+            dist/altstore-source.json
+            dist/SHA256SUMS.txt

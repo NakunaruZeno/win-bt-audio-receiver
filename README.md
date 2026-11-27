@@ -10,15 +10,31 @@ AetherSora is an ultra-lightweight (~438 KB) Windows System Tray audio receiver 
 
 ## Download & Installation
 
+### Quick Direct Downloads (Latest Release)
+
+| Platform | Direct Download | Notes |
+| :--- | :--- | :--- |
+| **Windows 10 / 11 (x64)** | [**AetherSora.exe**](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/AetherSora.exe) | Standalone System Tray receiver (~438 KB, double-click to run — no Rust required) |
+| **Android 10+** | [**AetherSora-Companion.apk**](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/AetherSora-Companion.apk) | Pure-SDK Wi-Fi 5 GHz Companion App (~55 KB, Celestial Sky Minimalist UI) |
+| **iOS / iPadOS 15+** | [**AetherSora-Companion-iOS-unsigned.ipa**](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/AetherSora-Companion-iOS-unsigned.ipa) | Unsigned ReplayKit IPA (sideload via AltStore / SideStore / Sideloadly / TrollStore) |
+| **AltStore / SideStore Source** | [`altstore-source.json`](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/altstore-source.json) | Paste this URL into AltStore / SideStore Sources for 1-tap iOS install & updates |
+
+View [All Releases & SHA-256 Checksums](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest).
+
 ### Requirements
-- **PC:** Windows 10 (Version 2004 / Build 19041+) or Windows 11 (`x86_64-pc-windows-msvc` Rust toolchain to build from source).
+- **PC:** Windows 10 (Version 2004 / Build 19041+) or Windows 11 (ready-to-run `AetherSora.exe` above, or `x86_64-pc-windows-msvc` Rust toolchain to build from source).
 - **Phone:**
   - **Wi-Fi Companion App (Android):** Android 10+ on the same Wi-Fi LAN (no Developer Mode, no ADB).
-  - **Wi-Fi Companion App (iOS / iPadOS):** iOS 15+ on the same Wi-Fi LAN (ReplayKit Broadcast Extension, no Mac needed — built via GitHub Actions `.ipa`).
+  - **Wi-Fi Companion App (iOS / iPadOS):** iOS 15+ on the same Wi-Fi LAN (ReplayKit Broadcast Extension, built via GitHub Actions `.ipa`).
   - **Wi-Fi ADB Wireless mode:** Android 11+ on the same Wi-Fi LAN + `adb.exe` on PC (`winget install Google.PlatformTools`).
   - **Bluetooth mode:** Any Android or iOS phone (zero phone app required).
 
 ### Install PC Receiver (`AetherSora.exe`)
+
+- **Direct Download (Recommended):** Download [**AetherSora.exe**](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/AetherSora.exe) from GitHub Releases and double-click to launch silently in the Windows System Tray.
+
+<details>
+<summary>Build PC Receiver from Source (Optional)</summary>
 
 **Option A — Install directly with Cargo:**
 ```powershell
@@ -37,21 +53,20 @@ The standalone executable (~438 KB, with pure Win32 System Tray, embedded 5.3 KB
 target\release\AetherSora.exe
 ```
 
+</details>
+
 ### Android Companion App (Optional — For Wi-Fi Lossless Without Developer Mode)
 
-A pre-built, signed **~55 KB** pure-SDK APK (`v0.4.0`, Celestial Sky Minimalist UI) is included in this repository:
-```text
-android\companion\AetherSora-Companion.apk
-```
-Copy it to your Android 10+ phone and install directly. *(To rebuild the APK locally using your installed Android SDK + JDK, run `powershell -ExecutionPolicy Bypass -File .\android\companion\build.ps1`.)*
+1. Download [**AetherSora-Companion.apk**](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/AetherSora-Companion.apk) (`v0.4.0`, ~55 KB pure-SDK APK) directly on your Android 10+ phone and install it.
+2. *(Optional — Build from source locally with Android SDK + JDK: `powershell -ExecutionPolicy Bypass -File .\android\companion\build.ps1`.)*
 
 ### iOS / iPadOS Companion App (Optional — ReplayKit Wi-Fi Lossless)
 
-Full native SwiftUI + ReplayKit Broadcast Upload Extension source lives under `ios/companion/`, built automatically into an unsigned `.ipa` via `.github/workflows/build-ios.yml` (`macos-15`):
+Full native SwiftUI + ReplayKit Broadcast Upload Extension source lives under `ios/companion/` and is automatically compiled and published on each release:
 
-1. Download **`AetherSora-Companion-iOS-unsigned`** from your GitHub repository **Actions** tab (and extract `.ipa` if zipped).
-2. Sideload `AetherSora-Companion-iOS-unsigned.ipa` onto iPhone/iPad (iOS 15+) using **AltStore**, **SideStore**, **Sideloadly**, or **TrollStore**.
-   - Make sure to keep **App Extensions (`BroadcastUpload`)** enabled when sideloading with AltStore/SideStore/Sideloadly so system audio capture installs alongside the main app.
+1. **AltStore / SideStore (Easiest):** Copy `https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/altstore-source.json` and add it under **Browse -> Sources -> +** in **AltStore** or **SideStore** to install & update AetherSora directly.
+2. **Manual Sideload:** Download [**AetherSora-Companion-iOS-unsigned.ipa**](https://github.com/NakunaruZeno/win-bt-audio-receiver/releases/latest/download/AetherSora-Companion-iOS-unsigned.ipa) directly from GitHub Releases and install onto iPhone/iPad (iOS 15+) using **AltStore**, **SideStore**, **Sideloadly**, or **TrollStore**.
+   - Keep **App Extensions (`BroadcastUpload`)** enabled when sideloading with AltStore/SideStore/Sideloadly so system audio capture installs alongside the main app.
 
 ---
 
@@ -165,13 +180,13 @@ Stored locally next to `AetherSora.exe` (excluded from Git via `.gitignore`):
 
 ```text
 AetherSora/
-├── .github/workflows/  # CI workflow building unsigned iOS .ipa on macOS runner
+├── .github/workflows/  # CI workflows for unsigned iOS .ipa & automated multi-platform GitHub Releases
 ├── android/
 │   ├── agent/          # 5.3 KB ADB DEX agent (REMOTE_SUBMIX, embedded in AetherSora.exe)
-│   └── companion/      # ~55 KB pure-SDK Android 10+ Companion APK (Celestial Sky UI)
+│   └── companion/      # Pure-SDK Android 10+ Companion App source (Celestial Sky UI)
 ├── ios/
 │   └── companion/      # Native SwiftUI + ReplayKit Broadcast Extension (XcodeGen + iOS 15+)
-├── assets/             # Chrono-Star SVG logos and Windows PE icon resource
+├── assets/             # Chrono-Star SVG logo and Windows PE icon resource
 ├── src/
 │   ├── bluetooth/      # Isolated WinRT AudioPlaybackConnection receiver
 │   ├── wifi/           # UDP framing, SPSC ring buffer, WASAPI renderer, LAN discovery, mDNS watch, ADB
@@ -180,8 +195,6 @@ AetherSora/
 │   ├── main.rs         # Native GUI entry point, CLI parser, ActiveTransport state machine
 │   ├── signal.rs       # AppSignal, single-instance guard, named --stop event, EcoQoS opt-out
 │   └── tray/           # Pure Win32 System Tray, lazy Celestial Sky flyout, Toast & Debug Log viewer
-├── DESIGN.md           # Shared Celestial Sky Minimalist tokens across Windows, Android, iOS
-├── PRODUCT.md          # Product scope & platform architecture record
 ├── build.rs            # Embeds Windows PE icon resource
 └── Cargo.toml          # Zero third-party Rust crates beyond windows = "0.58.0"
 ```

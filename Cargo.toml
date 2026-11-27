@@ -1,6 +1,6 @@
 [package]
 name = "aethersora"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "AetherSora - Ultra-lightweight Windows System Tray Universal Audio Receiver (Wi-Fi 5GHz Lossless + Bluetooth A2DP Sink)"
 

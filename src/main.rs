@@ -60,7 +60,7 @@ enum CommandAction {
 
 fn print_help() {
     log::info(
-        "AetherSora v0.3.1 - Universal Windows System Tray Audio Receiver\n\
+        "AetherSora v0.4.0 - Universal Windows System Tray Audio Receiver\n\
          \n\
          USAGE:\n\
          \tAetherSora                                    Run silently in Windows System Tray (default)\n\
@@ -288,7 +288,7 @@ fn run_orchestrator(
     };
 
     log::info(format!(
-        "[Startup] AetherSora v0.3.1 started (mode: {}, tray: {use_tray}).",
+        "[Startup] AetherSora v0.4.0 started (mode: {}, tray: {use_tray}).",
         initial_mode.as_str()
     ));
 

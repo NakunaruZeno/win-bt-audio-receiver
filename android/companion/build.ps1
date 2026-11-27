@@ -4,8 +4,12 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $buildDir = Join-Path $scriptDir "build"
 $apkOut = Join-Path $scriptDir "AetherSora-Companion.apk"
 
-# Locate JDK tools (PATH or Android Studio JBR)
+# Locate JDK tools (PATH, JAVA_HOME, or Android Studio JBR)
 $javac = (Get-Command javac -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
+if (-not $javac -and -not [string]::IsNullOrWhiteSpace($env:JAVA_HOME)) {
+    $javaHomeJavac = Join-Path $env:JAVA_HOME "bin\javac.exe"
+    if (Test-Path $javaHomeJavac) { $javac = $javaHomeJavac }
+}
 if (-not $javac) {
     $jbrJavac = "C:\Program Files\Android\Android Studio\jbr\bin\javac.exe"
     if (Test-Path $jbrJavac) { $javac = $jbrJavac }
@@ -16,11 +20,28 @@ $keytool = Join-Path $javaBinDir "keytool.exe"
 $env:PATH = "$javaBinDir;$env:PATH"
 
 # Locate Android SDK tools
-$sdkRoot = "$env:LOCALAPPDATA\Android\Sdk"
-$androidJar = Get-ChildItem -Path "$sdkRoot\platforms" -Recurse -Filter "android.jar" |
-    Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
-$btDir = Get-ChildItem -Path "$sdkRoot\build-tools" -Directory |
-    Sort-Object Name -Descending | Select-Object -ExpandProperty FullName -First 1
+$sdkCandidates = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT)
+if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    $sdkCandidates += (Join-Path $env:LOCALAPPDATA "Android\Sdk")
+}
+$sdkRoot = $sdkCandidates |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } |
+    Select-Object -First 1
+if (-not $sdkRoot) { throw "Android SDK root not found." }
+
+$androidJar = Get-ChildItem -Path (Join-Path $sdkRoot "platforms") -Recurse -Filter "android.jar" |
+    Sort-Object -Property @{ Expression = {
+        if ($_.Directory.Name -match '^android-(\d+)') { [int]$Matches[1] } else { 0 }
+    }; Descending = $true }, @{ Expression = { $_.Directory.Name }; Descending = $true } |
+    Select-Object -ExpandProperty FullName -First 1
+if (-not $androidJar) { throw "android.jar not found under $sdkRoot\platforms" }
+
+$btDir = Get-ChildItem -Path (Join-Path $sdkRoot "build-tools") -Directory |
+    Sort-Object -Property @{ Expression = {
+        if ($_.Name -match '^(\d+\.\d+\.\d+)') { [version]$Matches[1] } else { [version]"0.0.0" }
+    }; Descending = $true }, @{ Expression = { $_.Name }; Descending = $true } |
+    Select-Object -ExpandProperty FullName -First 1
+if (-not $btDir) { throw "Android build-tools not found under $sdkRoot\build-tools" }
 
 $aapt2 = Join-Path $btDir "aapt2.exe"
 $d8Bat = Join-Path $btDir "d8.bat"
