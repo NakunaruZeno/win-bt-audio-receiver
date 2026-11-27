@@ -1,147 +1,388 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0D1633"
-    android:orientation="vertical"
-    android:padding="24dp">
+    android:background="@drawable/bg_night_sky"
+    android:fitsSystemWindows="false"
+    android:orientation="vertical">
 
     <LinearLayout
+        android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingBottom="18dp">
-
-        <ImageView
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:contentDescription="AetherSora Logo"
-            android:src="@drawable/ic_launcher" />
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:paddingStart="14dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="AetherSora"
-                android:textColor="#F8FAFC"
-                android:textSize="22sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Wi-Fi 5GHz Lossless Audio (48 kHz PCM)"
-                android:textColor="#38BDF8"
-                android:textSize="13sp" />
-        </LinearLayout>
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/txtStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#15224A"
-        android:padding="14dp"
-        android:text="Status: Idle — Select a PC on Wi-Fi LAN"
-        android:textColor="#FACC15"
-        android:textSize="14sp" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingTop="18dp"
-        android:paddingBottom="8dp">
+        android:paddingBottom="8dp"
+        android:paddingEnd="20dp"
+        android:paddingStart="20dp"
+        android:paddingTop="12dp">
 
         <TextView
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Discovered PCs on Wi-Fi LAN"
-            android:textColor="#CBD5E1"
-            android:textSize="13sp"
-            android:textStyle="bold" />
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="-0.02"
+            android:text="AetherSora"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp" />
 
-        <Button
-            android:id="@+id/btnScan"
+        <TextView
             android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:background="#1E3A8A"
-            android:paddingLeft="14dp"
-            android:paddingRight="14dp"
-            android:text="Scan LAN"
-            android:textColor="#F8FAFC"
-            android:textSize="12sp" />
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_badge_pill"
+            android:fontFamily="monospace"
+            android:paddingBottom="5dp"
+            android:paddingEnd="10dp"
+            android:paddingStart="10dp"
+            android:paddingTop="5dp"
+            android:text="48 kHz PCM"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp" />
     </LinearLayout>
 
-    <ListView
-        android:id="@+id/listPcs"
+    <ScrollView
+        android:id="@+id/mainScroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:background="#111C3F"
-        android:divider="#1E293B"
-        android:dividerHeight="1dp" />
+        android:clipToPadding="false"
+        android:fillViewport="true"
+        android:overScrollMode="never"
+        android:scrollbars="none">
 
-    <TextView
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="16dp"
+            android:paddingEnd="20dp"
+            android:paddingStart="20dp"
+            android:paddingTop="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingBottom="24dp"
+                android:paddingTop="12dp">
+
+                <com.aethersora.companion.CelestialOrbView
+                    android:id="@+id/orbView"
+                    android:layout_width="104dp"
+                    android:layout_height="104dp"
+                    android:contentDescription="AetherSora status indicator" />
+
+                <TextView
+                    android:id="@+id/txtStatusTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:gravity="center"
+                    android:letterSpacing="-0.015"
+                    android:text="Ready to stream"
+                    android:textColor="@color/text_primary"
+                    android:textSize="18sp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:id="@+id/viewStatusDot"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/bg_status_dot" />
+
+                    <TextView
+                        android:id="@+id/txtStatusSubtitle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:gravity="center"
+                        android:maxLines="2"
+                        android:text="Scanning Wi-Fi LAN for PCs..."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingBottom="6dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="Nearby PCs"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+
+                <LinearLayout
+                    android:id="@+id/btnScan"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_btn_tonal"
+                    android:clickable="true"
+                    android:contentDescription="Scan local Wi-Fi network for AetherSora PCs"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:minHeight="48dp"
+                    android:minWidth="88dp"
+                    android:orientation="horizontal"
+                    android:paddingEnd="14dp"
+                    android:paddingStart="14dp">
+
+                    <ImageView
+                        android:id="@+id/imgScanIcon"
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_refresh" />
+
+                    <TextView
+                        android:id="@+id/txtScanLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="Scan"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/pcListContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <LinearLayout
+                android:id="@+id/emptyPcCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_card"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_desktop"
+                    android:alpha="0.7" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="No PC found on Wi-Fi"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="Open AetherSora on PC in Auto or Wi-Fi Companion mode on the same 5 GHz LAN, or enter IP below."
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/btnManualIpToggle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_row_ripple"
+                android:clickable="true"
+                android:contentDescription="Toggle manual PC IP address input"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="48dp"
+                android:orientation="horizontal"
+                android:paddingEnd="8dp"
+                android:paddingStart="4dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="Enter IP manually"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+
+                <ImageView
+                    android:id="@+id/imgManualChevron"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_chevron_down" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/manualIpContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingTop="4dp"
+                android:visibility="gone">
+
+                <EditText
+                    android:id="@+id/editPcIp"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:background="@drawable/bg_input"
+                    android:digits="0123456789."
+                    android:fontFamily="monospace"
+                    android:hint="192.168.1.50"
+                    android:imeOptions="actionDone"
+                    android:importantForAutofill="no"
+                    android:inputType="textNoSuggestions"
+                    android:paddingEnd="16dp"
+                    android:paddingStart="16dp"
+                    android:singleLine="true"
+                    android:textColor="@color/text_primary"
+                    android:textColorHint="@color/text_tertiary"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/rowAutoMute"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_pc_item"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="68dp"
+                android:orientation="horizontal"
+                android:paddingBottom="12dp"
+                android:paddingEnd="14dp"
+                android:paddingStart="16dp"
+                android:paddingTop="12dp">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_speaker_mute" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="12dp"
+                    android:layout_marginStart="14dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="Auto-mute phone speaker"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="Silences speaker at volume 0 and restores on disconnect"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <Switch
+                    android:id="@+id/switchAutoMute"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:contentDescription="Auto-mute phone speaker while streaming"
+                    android:minHeight="48dp"
+                    android:minWidth="48dp"
+                    android:showText="false"
+                    android:thumb="@drawable/switch_thumb"
+                    android:track="@drawable/switch_track" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+
+    <LinearLayout
+        android:id="@+id/bottomDock"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:paddingTop="14dp"
-        android:paddingBottom="4dp"
-        android:text="Target PC IP Address (UDP 19480)"
-        android:textColor="#94A3B8"
-        android:textSize="12sp" />
+        android:background="@color/bg_sky_bottom"
+        android:orientation="vertical"
+        android:paddingBottom="16dp"
+        android:paddingEnd="20dp"
+        android:paddingStart="20dp"
+        android:paddingTop="10dp">
 
-    <EditText
-        android:id="@+id/editPcIp"
-        android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:background="#15224A"
-        android:hint="e.g. 192.168.1.50"
-        android:inputType="textNoSuggestions"
-        android:paddingLeft="12dp"
-        android:paddingRight="12dp"
-        android:singleLine="true"
-        android:textColor="#F8FAFC"
-        android:textColorHint="#64748B"
-        android:textSize="15sp" />
+        <LinearLayout
+            android:id="@+id/btnToggle"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:background="@drawable/bg_btn_primary"
+            android:clickable="true"
+            android:contentDescription="Connect and stream lossless audio to selected PC"
+            android:focusable="true"
+            android:gravity="center"
+            android:minHeight="56dp"
+            android:orientation="horizontal"
+            android:paddingEnd="20dp"
+            android:paddingStart="20dp">
 
-    <CheckBox
-        android:id="@+id/chkAutoMute"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:buttonTint="#38BDF8"
-        android:checked="true"
-        android:text="Auto-mute phone speaker (set media volume to 0)"
-        android:textColor="#CBD5E1"
-        android:textSize="13sp" />
+            <ImageView
+                android:id="@+id/imgToggleIcon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_waveform" />
 
-    <Button
-        android:id="@+id/btnToggle"
-        android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:layout_marginTop="12dp"
-        android:background="#38BDF8"
-        android:text="Connect &amp; Stream Lossless"
-        android:textColor="#0D1633"
-        android:textSize="16sp"
-        android:textStyle="bold" />
+            <TextView
+                android:id="@+id/txtToggleLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="Connect &amp; Stream"
+                android:textColor="@color/text_on_accent"
+                android:textSize="16sp" />
+        </LinearLayout>
 
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingTop="10dp"
-        android:text="No Developer Mode or ADB required. Uncheck Auto-mute if your Android ROM silences capture at volume 0. Restores phone volume automatically on Disconnect."
-        android:textColor="#64748B"
-        android:textSize="11sp" />
-
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:text="No Developer Mode or ADB required"
+            android:textColor="@color/text_tertiary"
+            android:textSize="11sp" />
+    </LinearLayout>
 </LinearLayout>

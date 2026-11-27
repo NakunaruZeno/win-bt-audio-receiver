@@ -4,7 +4,7 @@
 
 # AetherSora: Windows System Tray Universal Audio Receiver
 
-AetherSora is an ultra-lightweight (~422 KB) Windows System Tray audio receiver written in Rust with **zero third-party Rust crates** beyond Microsoft's official `windows` crate. It launches silently into the Windows System Tray (zero terminal window) with native Windows Toast notifications and turns your PC into a low-latency wireless speaker over **Wi-Fi 5 GHz (48 kHz Lossless PCM)** or **Bluetooth A2DP Sink**.
+AetherSora is an ultra-lightweight (~438 KB) Windows System Tray audio receiver written in Rust with **zero third-party Rust crates** beyond Microsoft's official `windows` crate. It launches silently into the Windows System Tray (zero terminal window) with native Windows Toast notifications and turns your PC into a low-latency wireless speaker over **Wi-Fi 5 GHz (48 kHz Lossless PCM)** or **Bluetooth A2DP Sink**.
 
 ---
 
@@ -13,9 +13,10 @@ AetherSora is an ultra-lightweight (~422 KB) Windows System Tray audio receiver 
 ### Requirements
 - **PC:** Windows 10 (Version 2004 / Build 19041+) or Windows 11 (`x86_64-pc-windows-msvc` Rust toolchain to build from source).
 - **Phone:**
-  - **Bluetooth mode:** Any Android or iOS phone (zero phone app required).
-  - **Wi-Fi Companion App mode:** Android 10+ on the same Wi-Fi LAN (no Developer Mode, no ADB).
+  - **Wi-Fi Companion App (Android):** Android 10+ on the same Wi-Fi LAN (no Developer Mode, no ADB).
+  - **Wi-Fi Companion App (iOS / iPadOS):** iOS 15+ on the same Wi-Fi LAN (ReplayKit Broadcast Extension, no Mac needed — built via GitHub Actions `.ipa`).
   - **Wi-Fi ADB Wireless mode:** Android 11+ on the same Wi-Fi LAN + `adb.exe` on PC (`winget install Google.PlatformTools`).
+  - **Bluetooth mode:** Any Android or iOS phone (zero phone app required).
 
 ### Install PC Receiver (`AetherSora.exe`)
 
@@ -31,18 +32,26 @@ cd win-bt-audio-receiver
 cargo build --release
 ```
 
-The standalone executable (~422 KB, with pure Win32 System Tray, embedded 5.3 KB ADB agent, and Chrono-Star icon) is produced at:
+The standalone executable (~438 KB, with pure Win32 System Tray, embedded 5.3 KB ADB agent, and Chrono-Star icon) is produced at:
 ```text
 target\release\AetherSora.exe
 ```
 
 ### Android Companion App (Optional — For Wi-Fi Lossless Without Developer Mode)
 
-A pre-built, signed **24.5 KB** APK is included in this repository:
+A pre-built, signed **~55 KB** pure-SDK APK (`v0.4.0`, Celestial Sky Minimalist UI) is included in this repository:
 ```text
 android\companion\AetherSora-Companion.apk
 ```
 Copy it to your Android 10+ phone and install directly. *(To rebuild the APK locally using your installed Android SDK + JDK, run `powershell -ExecutionPolicy Bypass -File .\android\companion\build.ps1`.)*
+
+### iOS / iPadOS Companion App (Optional — ReplayKit Wi-Fi Lossless)
+
+Full native SwiftUI + ReplayKit Broadcast Upload Extension source lives under `ios/companion/`, built automatically into an unsigned `.ipa` via `.github/workflows/build-ios.yml` (`macos-15`):
+
+1. Download **`AetherSora-Companion-iOS-unsigned`** from your GitHub repository **Actions** tab (and extract `.ipa` if zipped).
+2. Sideload `AetherSora-Companion-iOS-unsigned.ipa` onto iPhone/iPad (iOS 15+) using **AltStore**, **SideStore**, **Sideloadly**, or **TrollStore**.
+   - Make sure to keep **App Extensions (`BroadcastUpload`)** enabled when sideloading with AltStore/SideStore/Sideloadly so system audio capture installs alongside the main app.
 
 ---
 
@@ -52,16 +61,17 @@ Double-click `AetherSora.exe` to start immediately in the **Windows System Tray*
 
 Pick the connection path that fits your device:
 
-### Option 1: Wi-Fi 5 GHz Companion App (Android 10+ — Recommended for Most Users)
+### Option 1: Wi-Fi 5 GHz Companion App (Android 10+ & iOS 15+ — Recommended)
 1. Start `AetherSora.exe` on your PC in **Auto** or **Wi-Fi 5GHz (Companion App)** mode.
    - If Windows Defender Firewall prompts on first launch, click **Allow access** (UDP `19480` audio + UDP `19481` LAN discovery).
-2. Install and open `android\companion\AetherSora-Companion.apk` on your phone. It automatically discovers your PC on Wi-Fi LAN.
-3. Tap **Connect & Stream Lossless** and accept Android's capture prompt.
-   - **Auto-mute phone speaker** is enabled by default to set phone media volume to `0` (eliminating speaker echo) and automatically restores your previous volume when you disconnect. *(Uncheck it if your Android ROM silences internal capture at volume 0.)*
+2. Open **AetherSora** on Android or iPhone/iPad. It automatically scans your Wi-Fi LAN for nearby PCs.
+3. Tap your PC card (or enter the IP manually if needed) and tap **Connect & Stream**:
+   - **On Android:** Accept the system capture prompt. **Auto-mute phone speaker** lowers media volume to `0` to prevent speaker echo and restores it automatically on disconnect.
+   - **On iPhone / iPad:** Tap **Start Broadcast** in the ReplayKit sheet. Turn iPhone hardware volume down to `0` so only PC speakers play (ReplayKit captures `.audioApp` pre-speaker, so streamed audio stays at 100%). *Note: iOS automatically silences FairPlay DRM apps such as Apple Music or Netflix during broadcasts.*
 
 ### Option 2: Bluetooth A2DP Sink (Android & iOS — Zero Phone App)
 1. Pair your phone with Windows via **Settings (`Win + I`) -> Bluetooth & devices -> Add device -> Bluetooth**.
-2. Right-click the AetherSora icon in the System Tray -> **Bluetooth Device -> Scan / Refresh Paired Devices**, then click your phone.
+2. Click the AetherSora icon in the System Tray -> **Bluetooth Device -> Scan BT**, then pick your phone.
 
 ### Option 3: Wi-Fi 5 GHz ADB Wireless (Android 11+ — Zero APK, All Apps, Auto-Mute)
 1. Install ADB on Windows if not already installed:
@@ -88,12 +98,12 @@ Pick the connection path that fits your device:
 
 ### Mode Comparison
 
-AetherSora enforces compile-time mutual exclusion (`enum ActiveTransport { WifiAdb, WifiApp, Bluetooth }`): **only one audio transport exists in memory at any moment**. In **Auto** mode, when running on Bluetooth fallback, a 0% CPU passive watcher listens on UDP `19480`/`19481` and mDNS `224.0.0.251:5353` so connecting the Companion App or re-enabling Wireless Debugging automatically drops Bluetooth and upgrades to 48 kHz Wi-Fi Lossless.
+AetherSora enforces compile-time mutual exclusion (`enum ActiveTransport { WifiAdb, WifiApp, Bluetooth }`): **only one audio transport exists in memory at any moment**. In **Auto** mode, when running on Bluetooth fallback, a 0% CPU passive watcher listens on UDP `19480`/`19481` and mDNS `224.0.0.251:5353` so connecting the Android/iOS Companion App or re-enabling Wireless Debugging automatically drops Bluetooth and upgrades to 48 kHz Wi-Fi Lossless.
 
 | Mode | Best For | Phone Setup | Audio Quality & Latency | PC Footprint |
 | :--- | :--- | :--- | :--- | :--- |
-| **Auto** (`--mode auto`) | Hands-free daily use | Auto-upgrades BT <-> Companion App <-> ADB Wireless | Best available (up to 48 kHz Lossless) | ~1.8-5.0 MB RAM, 0% CPU idle |
-| **Wi-Fi Companion App** (`--mode wifi-app`) | Android 10+ without Dev Mode | 24.5 KB APK, 1-tap LAN discovery + auto-mute | 48 kHz 16-bit Stereo PCM (~15-30 ms) | ~1.77 MB RAM standby, < 0.5% CPU |
+| **Auto** (`--mode auto`) | Hands-free daily use | Auto-upgrades BT <-> Companion App <-> ADB Wireless | Best available (up to 48 kHz Lossless) | ~1.8-5.3 MB RAM, 0% CPU idle |
+| **Wi-Fi Companion App** (`--mode wifi-app`) | Android 10+ & iOS 15+ without Dev Mode | ~55 KB Android APK or iOS ReplayKit IPA + LAN discovery | 48 kHz 16-bit Stereo PCM (~15-30 ms) | ~1.8 MB RAM standby, < 0.5% CPU |
 | **Wi-Fi ADB Wireless** (`--mode wifi-adb`) | Android 11+ power users | Wireless Debugging + one-time `--pair` (zero APK) | 48 kHz 16-bit Stereo PCM (~15-30 ms) | ~1.8-4.0 MB RAM, < 0.5% CPU |
 | **Bluetooth A2DP Sink** (`--mode bt`) | Android & iOS zero-app setup | Windows Bluetooth pairing only | Windows SBC Stereo (44.1 kHz, ~150-250 ms) | ~4.2-4.6 MB RAM, 0% CPU idle |
 
@@ -103,10 +113,11 @@ AetherSora enforces compile-time mutual exclusion (`enum ActiveTransport { WifiA
 
 ### Companion App does not discover the PC on LAN
 - Ensure AetherSora PC is in **Auto** or **Wi-Fi 5GHz (Companion App)** mode.
-- Allow `AetherSora.exe` through **Windows Defender Firewall** for UDP ports `19480` and `19481` (especially if your Windows Wi-Fi profile is set to **Public**). You can also enter the PC's Wi-Fi IP manually in the app.
+- Allow `AetherSora.exe` through **Windows Defender Firewall** for UDP ports `19480` and `19481` (especially if your Windows Wi-Fi profile is set to **Public**). You can also enter the PC's Wi-Fi IP manually in **Enter IP manually**.
+- On iOS 15+, verify **Settings -> Privacy & Security -> Local Network -> AetherSora** is turned ON.
 
-### Companion App produces silence when Auto-mute is enabled
-- Most newer Android ROMs apply speaker volume at the Audio HAL after `AudioPlaybackCapture`, allowing silence on the phone while streaming full audio to the PC. If your specific ROM silences capture at volume `0`, uncheck **Auto-mute phone speaker** in the app or use **ADB Wireless** mode (`REMOTE_SUBMIX`).
+### Companion App produces silence when Auto-mute is enabled (Android)
+- Most newer Android ROMs apply speaker volume at the Audio HAL after `AudioPlaybackCapture`, allowing silence on the phone while streaming full audio to the PC. If your specific ROM silences capture at volume `0`, turn off **Auto-mute phone speaker** in the app or use **ADB Wireless** mode (`REMOTE_SUBMIX`).
 
 ### `adb pair` fails with `error: protocol fault`
 - Double-check the IP address and use the **pairing port inside the pairing popup** (not the outer Wireless Debugging port), keeping the popup open until pairing finishes.
@@ -154,9 +165,12 @@ Stored locally next to `AetherSora.exe` (excluded from Git via `.gitignore`):
 
 ```text
 AetherSora/
+├── .github/workflows/  # CI workflow building unsigned iOS .ipa on macOS runner
 ├── android/
 │   ├── agent/          # 5.3 KB ADB DEX agent (REMOTE_SUBMIX, embedded in AetherSora.exe)
-│   └── companion/      # 24.5 KB pure-SDK Android 10+ Companion APK (AudioPlaybackCapture)
+│   └── companion/      # ~55 KB pure-SDK Android 10+ Companion APK (Celestial Sky UI)
+├── ios/
+│   └── companion/      # Native SwiftUI + ReplayKit Broadcast Extension (XcodeGen + iOS 15+)
 ├── assets/             # Chrono-Star SVG logos and Windows PE icon resource
 ├── src/
 │   ├── bluetooth/      # Isolated WinRT AudioPlaybackConnection receiver
@@ -166,6 +180,8 @@ AetherSora/
 │   ├── main.rs         # Native GUI entry point, CLI parser, ActiveTransport state machine
 │   ├── signal.rs       # AppSignal, single-instance guard, named --stop event, EcoQoS opt-out
 │   └── tray/           # Pure Win32 System Tray, lazy Celestial Sky flyout, Toast & Debug Log viewer
+├── DESIGN.md           # Shared Celestial Sky Minimalist tokens across Windows, Android, iOS
+├── PRODUCT.md          # Product scope & platform architecture record
 ├── build.rs            # Embeds Windows PE icon resource
 └── Cargo.toml          # Zero third-party Rust crates beyond windows = "0.58.0"
 ```

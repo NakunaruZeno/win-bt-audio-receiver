@@ -10,6 +10,19 @@ android/companion/build/
 **/*.keystore
 **/*.jks
 
+# iOS XcodeGen generated project & build artifacts
+ios/companion/*.xcodeproj/
+ios/companion/build/
+ios/companion/Payload/
+*.ipa
+DerivedData/
+xcuserdata/
+
+# Impeccable runtime & mock directories
+.impeccable/questions/
+.impeccable/mocks/
+.impeccable/review/
+
 # Local configuration & private device identifiers
 device_id.cfg
 **/*.cfg

@@ -34,6 +34,7 @@ public final class AudioCaptureService extends Service {
     public static final String ACTION_START = "com.aethersora.companion.START";
     public static final String ACTION_STOP = "com.aethersora.companion.STOP";
     public static final String ACTION_STATUS = "com.aethersora.companion.STATUS";
+    public static final String ACTION_LEVEL = "com.aethersora.companion.LEVEL";
 
     public static final String EXTRA_RESULT_CODE = "result_code";
     public static final String EXTRA_RESULT_DATA = "result_data";
@@ -41,7 +42,14 @@ public final class AudioCaptureService extends Service {
     public static final String EXTRA_PC_PORT = "pc_port";
     public static final String EXTRA_AUTO_MUTE = "auto_mute";
     public static final String EXTRA_RUNNING = "running";
+    public static final String EXTRA_STATE = "state";
+    public static final String EXTRA_TITLE = "title";
     public static final String EXTRA_MESSAGE = "message";
+    public static final String EXTRA_LEVEL = "level";
+
+    public static final int STATUS_IDLE = 0;
+    public static final int STATUS_STREAMING = 1;
+    public static final int STATUS_ERROR = 2;
 
     private static final String CHANNEL_ID = "aethersora_stream";
     private static final int NOTIF_ID = 1048;
@@ -60,12 +68,17 @@ public final class AudioCaptureService extends Service {
     private static final byte FLAG_BYE = 0x04;
 
     public static volatile boolean isStreaming = false;
+    public static volatile int lastStatusCode = STATUS_IDLE;
+    public static volatile String activePcIp = "";
+    public static volatile String lastStatusTitle = "Ready to stream";
+    public static volatile String lastStatusSubtitle = "Wi-Fi 5GHz Lossless • UDP 19480";
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private MediaProjection mediaProjection;
     private Thread captureThread;
     private int savedMusicVolume = -1;
     private boolean didAutoMute = false;
+    private long lastLevelBroadcastNs = 0L;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -75,7 +88,7 @@ public final class AudioCaptureService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null || ACTION_STOP.equals(intent.getAction())) {
-            stopStreamingAndSelf();
+            stopStreamingAndSelf(STATUS_IDLE, "Ready to stream", "Stream stopped");
             return START_NOT_STICKY;
         }
 
@@ -87,25 +100,27 @@ public final class AudioCaptureService extends Service {
             final boolean autoMute = intent.getBooleanExtra(EXTRA_AUTO_MUTE, true);
 
             if (resultData == null || pcIp == null || pcIp.trim().isEmpty()) {
-                broadcastStatus(false, "Status: Missing capture permission or PC IP");
+                broadcastStatus(false, STATUS_ERROR, "Connection failed", "Missing capture permission or PC IP");
                 stopSelf();
                 return START_NOT_STICKY;
             }
 
-            startForegroundNotification(pcIp, pcPort);
+            final String trimmedIp = pcIp.trim();
+            activePcIp = trimmedIp;
+            startForegroundNotification(trimmedIp, pcPort);
 
             MediaProjectionManager mpm =
                     (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
             mediaProjection = mpm.getMediaProjection(resultCode, resultData);
             if (mediaProjection == null) {
-                broadcastStatus(false, "Status: MediaProjection denied");
+                broadcastStatus(false, STATUS_ERROR, "Capture denied", "Grant screen audio capture access to stream");
                 stopSelf();
                 return START_NOT_STICKY;
             }
 
             running.set(true);
             isStreaming = true;
-            captureThread = new Thread(() -> runCaptureLoop(pcIp.trim(), pcPort, autoMute), "aether-capture");
+            captureThread = new Thread(() -> runCaptureLoop(trimmedIp, pcPort, autoMute), "aether-capture");
             captureThread.start();
         }
 
@@ -144,6 +159,9 @@ public final class AudioCaptureService extends Service {
         InetAddress pcAddr = null;
         byte[] packetBuf = new byte[PACKET_BYTES];
         ByteBuffer headerView = ByteBuffer.wrap(packetBuf, 0, HEADER_BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        int exitStatusCode = STATUS_IDLE;
+        String exitTitle = "Ready to stream";
+        String exitSubtitle = "Stream disconnected";
 
         try {
             AudioPlaybackCaptureConfiguration config =
@@ -185,9 +203,15 @@ public final class AudioCaptureService extends Service {
             } catch (Throwable ignored) {
             }
 
-            broadcastStatus(true, acked
-                    ? "Status: Connected & Streaming 48 kHz Lossless -> " + pcIp
-                    : "Status: Streaming 48 kHz PCM -> " + pcIp + " (unacked; check PC Firewall)");
+            if (acked) {
+                broadcastStatus(true, STATUS_STREAMING, "Streaming Lossless", "48 kHz PCM -> " + pcIp);
+            } else {
+                broadcastStatus(
+                        true,
+                        STATUS_STREAMING,
+                        "Streaming (Unacked)",
+                        "No ACK from " + pcIp + " — verify PC Firewall UDP " + pcPort);
+            }
 
             recorder.startRecording();
             applyAutoMuteIfEnabled(autoMute);
@@ -212,24 +236,29 @@ public final class AudioCaptureService extends Service {
                     break;
                 }
 
-                boolean silent = isSilent(packetBuf, HEADER_BYTES, PCM_BYTES_PER_PACKET);
+                float rms = measureRmsNormalized(packetBuf, HEADER_BYTES, PCM_BYTES_PER_PACKET);
+                boolean silent = rms == 0f;
                 silentCount = silent ? (silentCount + 1) : 0;
 
                 if (silentCount <= 50) {
                     writeHeader(headerView, seq++, FLAG_AUDIO);
                     socket.send(audioPacket);
                     lastKeepaliveNs = System.nanoTime();
+                    maybeBroadcastLevel(rms);
                 } else {
                     long now = System.nanoTime();
                     if (now - lastKeepaliveNs >= 400_000_000L) {
                         writeHeader(headerView, seq, FLAG_KEEPALIVE);
                         socket.send(keepalivePacket);
                         lastKeepaliveNs = now;
+                        maybeBroadcastLevel(0f);
                     }
                 }
             }
         } catch (Throwable t) {
-            broadcastStatus(false, "Status: Error — " + t.getMessage());
+            exitStatusCode = STATUS_ERROR;
+            exitTitle = "Stream interrupted";
+            exitSubtitle = t.getMessage() != null ? t.getMessage() : "Check Wi-Fi connection and retry";
         } finally {
             if (socket != null && pcAddr != null) {
                 try {
@@ -249,8 +278,20 @@ public final class AudioCaptureService extends Service {
                 } catch (Throwable ignored) {
                 }
             }
-            stopStreamingAndSelf();
+            stopStreamingAndSelf(exitStatusCode, exitTitle, exitSubtitle);
         }
+    }
+
+    private void maybeBroadcastLevel(float level) {
+        long now = System.nanoTime();
+        if (now - lastLevelBroadcastNs < 60_000_000L) {
+            return;
+        }
+        lastLevelBroadcastNs = now;
+        Intent i = new Intent(ACTION_LEVEL);
+        i.setPackage(getPackageName());
+        i.putExtra(EXTRA_LEVEL, level);
+        sendBroadcast(i);
     }
 
     private synchronized void applyAutoMuteIfEnabled(boolean autoMute) {
@@ -288,9 +329,10 @@ public final class AudioCaptureService extends Service {
         savedMusicVolume = -1;
     }
 
-    private void stopStreamingAndSelf() {
+    private void stopStreamingAndSelf(int statusCode, String title, String subtitle) {
         running.set(false);
         isStreaming = false;
+        activePcIp = "";
         restorePhoneVolumeIfMuted();
         if (mediaProjection != null) {
             try {
@@ -299,15 +341,20 @@ public final class AudioCaptureService extends Service {
             }
             mediaProjection = null;
         }
-        broadcastStatus(false, "Status: Disconnected");
+        broadcastStatus(false, statusCode, title, subtitle);
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
-    private void broadcastStatus(boolean active, String message) {
+    private void broadcastStatus(boolean active, int statusCode, String title, String message) {
+        lastStatusCode = statusCode;
+        lastStatusTitle = title;
+        lastStatusSubtitle = message;
         Intent i = new Intent(ACTION_STATUS);
         i.setPackage(getPackageName());
         i.putExtra(EXTRA_RUNNING, active);
+        i.putExtra(EXTRA_STATE, statusCode);
+        i.putExtra(EXTRA_TITLE, title);
         i.putExtra(EXTRA_MESSAGE, message);
         sendBroadcast(i);
     }
@@ -321,19 +368,32 @@ public final class AudioCaptureService extends Service {
         view.put(flags);
     }
 
-    private static boolean isSilent(byte[] buf, int offset, int len) {
+    private static float measureRmsNormalized(byte[] buf, int offset, int len) {
         int end = offset + len;
-        for (int i = offset; i < end; i++) {
-            if (buf[i] != 0) {
-                return false;
+        long sumSq = 0L;
+        int samples = 0;
+        boolean allZero = true;
+        for (int i = offset; i + 1 < end; i += 2) {
+            int lo = buf[i] & 0xFF;
+            int hi = buf[i + 1];
+            short s = (short) ((hi << 8) | lo);
+            if (s != 0) {
+                allZero = false;
+                long v = s;
+                sumSq += v * v;
             }
+            samples++;
         }
-        return true;
+        if (allZero || samples == 0) {
+            return 0f;
+        }
+        double rms = Math.sqrt((double) sumSq / (double) samples);
+        return (float) Math.min(1.0, rms / 12_000.0);
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        stopStreamingAndSelf();
+        stopStreamingAndSelf(STATUS_IDLE, "Ready to stream", "Stream stopped");
         super.onTaskRemoved(rootIntent);
     }
 
